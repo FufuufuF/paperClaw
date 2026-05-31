@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Runtime output (per run / cross-run)
+output/
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (for future paper-tools service)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Keep design / plan artifacts in .claude tracked
+!.claude/plan-*.md
+!.claude/settings.json
+
+.claude/
