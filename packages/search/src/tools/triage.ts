@@ -88,8 +88,8 @@ async function triageOne(c: ArxivCandidate, opts: TriageOpts): Promise<TriageIte
   const system = `你是一个论文 triage 助手. 接收一篇论文的 title + abstract, 输出严格的 JSON:
 {
   "verdict": "recommend" | "maybe" | "skip",
-  "reason": "20-60 字, 必须具体引用 abstract 中出现的方法 / 现象 / 数据集 / 论点; 严禁 'this paper is relevant' 这类废话",
-  "summary": "1-2 句中文简介, 概括论文做了什么 + 结果"
+  "reason": "20-60 字中文, 必须具体引用 abstract 中出现的方法 / 现象 / 数据集 / 论点; 严禁英文; 严禁 'this paper is relevant' 这类废话",
+  "summary": "1-2 句中文简介, 概括论文做了什么 + 结果; 必须使用中文, 不要用英文"
 }
 
 判断标准:
@@ -97,6 +97,7 @@ async function triageOne(c: ArxivCandidate, opts: TriageOpts): Promise<TriageIte
 - maybe: 主题相关但贡献不显著, 或不确定
 - skip: 跑题 / 仅 abstract 复述背景 / 与意图无关
 
+重要: reason 和 summary 必须全部使用中文回复, 不要使用英文.
 只输出 JSON, 不要前后文.`;
 
   const userMsg = `${anchor}
