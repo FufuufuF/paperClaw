@@ -9,15 +9,15 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "search:query": "pnpm --filter @paperclaw/cli exec tsx src/search-query.ts",
-    "search:cron": "pnpm --filter @paperclaw/cli exec tsx src/search-cron.ts",
-    "search:download": "pnpm --filter @paperclaw/cli exec tsx src/search-download.ts",
-    "test:search": "pnpm --filter @paperclaw/search exec tsx src/__tests__/smoke.ts && pnpm --filter @paperclaw/search exec tsx src/__tests__/replan-test.ts"
+    "chat": "pnpm --filter @paperclaw/cli exec tsx src/main.ts",
+    "test": "pnpm test:chat && pnpm test:search",
+    "test:search": "pnpm --filter @paperclaw/search exec tsx src/__tests__/smoke.ts",
+    "test:chat": "tsx tests/agent/smoke.test.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.19.19",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
-    "@types/node": "^22.9.0"
+    "typescript": "^5.6.3"
   },
   "packageManager": "pnpm@9.0.0"
 }
