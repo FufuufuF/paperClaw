@@ -1,5 +1,5 @@
 import { DeepSeekClient } from './deepseek.js';
-import type { LLMClient } from './types.js';
+import type { LLMClient } from './base.js';
 
 export type Provider = 'deepseek';
 
@@ -10,8 +10,8 @@ export interface CreateClientOpts {
 }
 
 /**
- * Default client factory. W1 supports DeepSeek only; Anthropic backend is on
- * the roadmap (design.md §5.2 — "对照实验"), but not in plan-search-module.
+ * Default provider factory. W1 supports DeepSeek only; Anthropic backend is on
+ * the roadmap (design.md §5.2 — "对照实验"), but not implemented yet.
  */
 export function createLLMClient(opts: CreateClientOpts = {}): LLMClient {
   const provider = opts.provider ?? 'deepseek';

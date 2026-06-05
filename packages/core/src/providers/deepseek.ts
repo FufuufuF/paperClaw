@@ -1,5 +1,5 @@
-import { withRetry } from '../util.js';
-import type { ChatOpts, ChatResponse, LLMClient, ToolCall } from './types.js';
+import { withRetry } from '../utils/retry.js';
+import type { ChatOpts, ChatResponse, LLMClient, ToolCall } from './base.js';
 
 export interface DeepSeekOpts {
   apiKey: string;

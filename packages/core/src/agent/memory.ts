@@ -1,12 +1,10 @@
 import { promises as fs } from 'node:fs';
 
 /**
- * Snapshot of `output/profile.md`. The search module only reads this — never
- * writes (per design.md §3.3 + plan F7). Cold start is the common case:
- * profile may not exist at all.
+ * Snapshot of `output/profile.md`. For now paperClaw only reads this — write-side
+ * memory/profile managers will be added with the reader skill.
  *
- * `readSlugs` are extracted from the "## 已读索引" section's `[[slug]]` links
- * so query_flow can filter the shortlist (AC1).
+ * Kept under `agent/memory.ts` to match nanobot's `agent/memory.py` home.
  */
 export interface ProfileSnapshot {
   /** absolute path that was attempted */

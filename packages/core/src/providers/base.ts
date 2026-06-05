@@ -1,9 +1,5 @@
 /**
- * Vendor-neutral LLM types. The `LLMClient.chat` shape mirrors the design doc
- * §5.2 — text + (optional) tool calls + token usage.
- *
- * For W1 we only use `text` (with `response_format: json_object`); tool-call
- * support is wired through but not yet exercised by the search module.
+ * Vendor-neutral LLM provider types. 对齐 nanobot 的 `providers/base.py`.
  */
 
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
