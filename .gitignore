@@ -38,4 +38,6 @@ venv/
 !.claude/plan-*.md
 !.claude/settings.json
 
+# Coding Agent Setting
 .claude/
+.codex/
