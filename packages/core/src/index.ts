@@ -135,10 +135,23 @@ export {
 } from './command/builtin.js';
 
 // ─── Agent ──────────────────────────────────────────────────────────────
-export type { RunnerConfig, RunnerResult } from './agent/runner.js';
+export type {
+  AgentCheckpoint,
+  AgentRunResult,
+  AgentRunSpec,
+  AgentStopReason,
+  RunnerConfig,
+  RunnerResult,
+  ToolRunEvent,
+} from './agent/runner.js';
 export type { AgentLoopConfig } from './agent/loop.js';
 export { AgentLoop } from './agent/loop.js';
-export { runToolLoop } from './agent/runner.js';
+export {
+  AgentRunner,
+  BACKFILL_TOOL_RESULT_CONTENT,
+  EMPTY_FINAL_RESPONSE_MESSAGE,
+  runToolLoop,
+} from './agent/runner.js';
 export {
   buildSessionMessages,
   compactToolResults,

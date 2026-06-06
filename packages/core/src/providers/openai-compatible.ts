@@ -136,6 +136,7 @@ export function parseOpenAIChatResponse(data: OAIChatResponse, providerName: str
   return {
     text: choice.message.content ?? undefined,
     toolCalls,
+    finishReason: choice.finish_reason,
     usage: {
       input: data.usage?.prompt_tokens ?? 0,
       output: data.usage?.completion_tokens ?? 0,

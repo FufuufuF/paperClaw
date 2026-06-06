@@ -5,12 +5,18 @@ export class MockLLM implements LLMClient {
   private queue: ChatResponse[] = [];
   receivedToolCount: number[] = [];
   receivedMessageRoles: string[][] = [];
+  receivedMessages: ChatOpts[] = [];
 
   enqueue(...responses: ChatResponse[]): void {
     this.queue.push(...responses);
   }
 
   async chat(opts: ChatOpts): Promise<ChatResponse> {
+    this.receivedMessages.push({
+      ...opts,
+      messages: opts.messages.map((m) => ({ ...m })),
+      tools: opts.tools?.map((t) => ({ ...t })),
+    });
     this.receivedToolCount.push(opts.tools?.length ?? 0);
     this.receivedMessageRoles.push(opts.messages.map((m) => m.role));
     const next = this.queue.shift();

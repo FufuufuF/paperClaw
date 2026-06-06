@@ -4,7 +4,7 @@ import type { CommandRouter } from '../command/router.js';
 import { createNewSession, type Session, type SessionStore, type Turn } from '../session/manager.js';
 import type { TraceBus } from '../trace.js';
 import { buildSessionMessages, estimateTokens } from './context.js';
-import { runToolLoop, type RunnerConfig } from './runner.js';
+import { AgentRunner, type RunnerConfig } from './runner.js';
 
 export interface AgentLoopConfig {
   sessionStore: SessionStore;
@@ -100,10 +100,12 @@ export class AgentLoop {
       const messages = buildSessionMessages(session, this.config.runner.contextBudget);
 
       // ── RUN ─────────────────────────────────────────────────────────
-      const result = await runToolLoop(
-        { ...this.config.runner, systemPrompt },
-        messages,
-      );
+      const runner = new AgentRunner(this.config.runner.llm);
+      const result = await runner.run({
+        ...this.config.runner,
+        systemPrompt,
+        initialMessages: messages,
+      });
 
       // 把 Runner 产出的所有 newTurns 追加到 session
       for (const t of result.newTurns) session.turns.push(t);

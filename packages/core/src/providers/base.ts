@@ -40,6 +40,7 @@ export interface ChatOpts {
 export interface ChatResponse {
   text?: string;
   toolCalls?: ToolCall[];
+  finishReason?: 'stop' | 'tool_calls' | 'length' | 'error' | string;
   usage: { input: number; output: number };
 }
 
