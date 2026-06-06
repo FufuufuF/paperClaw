@@ -7,4 +7,18 @@ export {
   type ProvidersConfig,
 } from './config.js';
 export { DeepSeekClient } from './deepseek.js';
-export { createLLMClient, type CreateClientOpts, type Provider } from './factory.js';
+export {
+  OpenAICompatibleClient,
+  parseOpenAIChatResponse,
+  type OpenAICompatibleOpts,
+} from './openai-compatible.js';
+export {
+  buildProviderSnapshot,
+  createLLMClient,
+  createLLMClientFromConfig,
+  providerConfigFor,
+  resolveModelPreset,
+  type CreateClientOpts,
+  type Provider,
+  type ProviderSnapshot,
+} from './factory.js';

@@ -48,3 +48,11 @@ export interface LLMClient {
   readonly id: string;
   chat(opts: ChatOpts): Promise<ChatResponse>;
 }
+
+export interface ProviderRuntimeOpts {
+  timeoutMs?: number;
+  retry?: {
+    tries?: number;
+    baseMs?: number;
+  };
+}

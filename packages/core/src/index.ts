@@ -1,7 +1,20 @@
 // ─── Providers ──────────────────────────────────────────────────────────
 export * from './providers/base.js';
-export { createLLMClient, type CreateClientOpts } from './providers/factory.js';
+export {
+  buildProviderSnapshot,
+  createLLMClient,
+  createLLMClientFromConfig,
+  providerConfigFor,
+  resolveModelPreset,
+  type CreateClientOpts,
+  type ProviderSnapshot,
+} from './providers/factory.js';
 export { DeepSeekClient } from './providers/deepseek.js';
+export {
+  OpenAICompatibleClient,
+  parseOpenAIChatResponse,
+  type OpenAICompatibleOpts,
+} from './providers/openai-compatible.js';
 
 // ─── Existing infra ─────────────────────────────────────────────────────
 export { TraceBus, type TraceEvent, type TraceEventKind } from './trace.js';
