@@ -3,7 +3,7 @@ import type { Channel } from '../channels/base.js';
 import type { CommandRouter } from '../command/router.js';
 import { createNewSession, type Session, type SessionStore, type Turn } from '../session/manager.js';
 import type { TraceBus } from '../trace.js';
-import { buildMessages, estimateTokens } from './context.js';
+import { buildSessionMessages, estimateTokens } from './context.js';
 import { runToolLoop, type RunnerConfig } from './runner.js';
 
 export interface AgentLoopConfig {
@@ -97,7 +97,7 @@ export class AgentLoop {
 
       // ── BUILD ───────────────────────────────────────────────────────
       const systemPrompt = await this.config.buildPrompt();
-      const messages = buildMessages(session, this.config.runner.contextBudget);
+      const messages = buildSessionMessages(session, this.config.runner.contextBudget);
 
       // ── RUN ─────────────────────────────────────────────────────────
       const result = await runToolLoop(

@@ -140,7 +140,7 @@ export type { AgentLoopConfig } from './agent/loop.js';
 export { AgentLoop } from './agent/loop.js';
 export { runToolLoop } from './agent/runner.js';
 export {
-  buildMessages,
+  buildSessionMessages,
   compactToolResults,
   estimateTokens,
   estimateMessagesTokens,

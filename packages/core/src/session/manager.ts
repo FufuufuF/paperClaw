@@ -12,7 +12,7 @@ export interface Turn {
   toolCalls?: ToolCall[];
   /** tool turn 对应哪个 call */
   toolCallId?: string;
-  /** 估算 token 数 (chars/3.5) — 用于 buildMessages 的预算裁剪 */
+  /** 估算 token 数 (chars/3.5) — 用于 buildSessionMessages 的预算裁剪 */
   tokenEstimate: number;
   /** unix ms */
   timestamp: number;

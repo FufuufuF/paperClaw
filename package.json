@@ -10,11 +10,12 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "chat": "pnpm --filter @paperclaw/cli exec tsx src/main.ts",
-    "test": "pnpm test:config && pnpm test:session && pnpm test:tools && pnpm test:providers && pnpm test:chat && pnpm test:search",
+    "test": "pnpm test:config && pnpm test:session && pnpm test:tools && pnpm test:providers && pnpm test:context && pnpm test:chat && pnpm test:search",
     "test:config": "tsx tests/config/schema.test.ts",
     "test:session": "tsx tests/session/manager.test.ts",
     "test:tools": "tsx tests/agent/tools.test.ts",
     "test:providers": "tsx tests/providers/factory.test.ts",
+    "test:context": "tsx tests/agent/context.test.ts",
     "test:search": "pnpm --filter @paperclaw/search exec tsx src/__tests__/smoke.ts",
     "test:chat": "tsx tests/agent/smoke.test.ts"
   },

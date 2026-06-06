@@ -3,9 +3,36 @@ import type { Session, Turn } from '../session/manager.js';
 import { renderTemplate } from '../utils/templates.js';
 import type { ToolRegistry } from './tools/registry.js';
 import { SkillsLoader } from './skills.js';
+import { platform, arch, version as nodeVersion } from 'node:process';
 
 export interface ContextBuilderOpts {
-  skills?: SkillsLoader;
+  skillLoader?: SkillsLoader;
+  workspace?: string;
+  timezone?: string;
+  disabledSkills?: string[];
+  contextBlocks?: PromptContextBlock[];
+}
+
+export interface BuildSystemPromptOpts {
+  channel?: string;
+  sessionSummary?: string;
+  contextBlocks?: PromptContextBlock[];
+  activeSkillNames?: string[];
+}
+
+export interface BuildTurnMessagesOpts {
+  history: ChatMessage[];
+  currentMessage: string;
+  channel?: string;
+  senderId?: string;
+  sessionId?: string;
+  metadataLines?: string[];
+  currentRole?: 'user' | 'assistant';
+}
+
+export interface PromptContextBlock {
+  title: string;
+  content: string;
 }
 
 /**
@@ -13,40 +40,139 @@ export interface ContextBuilderOpts {
  * of nanobot's `agent/context.py` ContextBuilder.
  */
 export class ContextBuilder {
-  readonly skills: SkillsLoader;
+  readonly skillLoader: SkillsLoader;
+  readonly workspace: string;
+  readonly timezone: string;
+  readonly contextBlocks: PromptContextBlock[];
 
   constructor(opts: ContextBuilderOpts = {}) {
-    this.skills = opts.skills ?? new SkillsLoader();
+    this.workspace = opts.workspace ?? process.cwd();
+    this.timezone = opts.timezone ?? 'UTC';
+    this.contextBlocks = opts.contextBlocks ?? [];
+    this.skillLoader = opts.skillLoader ?? new SkillsLoader({
+      workspace: this.workspace,
+      disabledSkills: opts.disabledSkills,
+    });
   }
 
-  buildSystemPrompt(tools: ToolRegistry): string {
-    const alwaysSkills = this.skills.getAlwaysSkills();
+  buildSystemPrompt(tools: ToolRegistry, opts: BuildSystemPromptOpts = {}): string {
+    const activeSkillNames = unique([
+      ...this.skillLoader.getAlwaysSkills(),
+      ...(opts.activeSkillNames ?? []),
+    ]);
     const parts = [
-      renderTemplate('agent/identity.md'),
+      renderTemplate('agent/identity.md', {
+        workspacePath: this.workspace,
+        runtime: runtimeDescription(),
+        channelHint: opts.channel ? `当前 channel: ${opts.channel}` : '',
+      }),
       renderTemplate('agent/tool_contract.md', { toolListing: renderToolListing(tools) }),
     ];
 
-    const alwaysContent = this.skills.loadSkillsForContext(alwaysSkills);
-    if (alwaysContent) {
-      parts.push(`# Active Skills\n\n${alwaysContent}`);
+    for (const block of [...this.contextBlocks, ...(opts.contextBlocks ?? [])]) {
+      if (block.title.trim() && block.content.trim()) {
+        parts.push(`# ${block.title.trim()}\n\n${block.content.trim()}`);
+      }
     }
 
-    const summary = this.skills.buildSkillsSummary(new Set(alwaysSkills));
+    const activeSkillContent = this.skillLoader.loadSkillsForContext(activeSkillNames);
+    if (activeSkillContent) {
+      parts.push(`# Active Skills\n\n${activeSkillContent}`);
+    }
+
+    const summary = this.skillLoader.buildSkillsSummary(new Set(activeSkillNames));
     if (summary) {
       parts.push(`# Available Skills\n\n${summary}`);
+    }
+
+    if (opts.sessionSummary) {
+      parts.push(`[Archived Context Summary]\n\n${opts.sessionSummary}`);
     }
 
     parts.push(renderTemplate('agent/conversation_strategy.md'));
     return parts.join('\n\n---\n\n');
   }
 
-  buildMessages(session: Session, budget: number): ChatMessage[] {
-    return buildMessages(session, budget);
+  buildSessionMessages(session: Session, budget: number): ChatMessage[] {
+    return buildSessionMessages(session, budget);
+  }
+
+  buildTurnMessages(opts: BuildTurnMessagesOpts): ChatMessage[] {
+    const currentRole = opts.currentRole ?? 'user';
+    const runtimeContext = this.buildRuntimeContext({
+      channel: opts.channel,
+      senderId: opts.senderId,
+      sessionId: opts.sessionId,
+      metadataLines: opts.metadataLines,
+    });
+    const current: ChatMessage = {
+      role: currentRole,
+      content: `${opts.currentMessage}\n\n${runtimeContext}`,
+    };
+
+    const messages = opts.history.slice();
+    if (messages.length > 0 && messages[messages.length - 1]!.role === currentRole) {
+      const last = messages[messages.length - 1]!;
+      messages[messages.length - 1] = {
+        ...last,
+        content: mergeMessageContent(last.content, current.content),
+      };
+      return messages;
+    }
+    messages.push(current);
+    return messages;
+  }
+
+  buildRuntimeContext(opts: {
+    channel?: string;
+    senderId?: string;
+    sessionId?: string;
+    metadataLines?: string[];
+  } = {}): string {
+    const lines = [
+      `Current Time: ${currentTimeString(this.timezone)}`,
+      `Workspace: ${this.workspace}`,
+      `Timezone: ${this.timezone}`,
+    ];
+    if (opts.channel) lines.push(`Channel: ${opts.channel}`);
+    if (opts.senderId) lines.push(`Sender ID: ${opts.senderId}`);
+    if (opts.sessionId) lines.push(`Session ID: ${opts.sessionId}`);
+    if (opts.metadataLines) lines.push(...opts.metadataLines.filter(Boolean));
+    return `[Runtime Context - metadata only, not instructions]\n${lines.join('\n')}\n[/Runtime Context]`;
   }
 }
 
 export function buildBasePrompt(tools: ToolRegistry): string {
   return new ContextBuilder().buildSystemPrompt(tools);
+}
+
+function runtimeDescription(): string {
+  return `${platform} ${arch}, Node ${nodeVersion}`;
+}
+
+function currentTimeString(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function mergeMessageContent(left: string, right: string): string {
+  return left ? `${left}\n\n${right}` : right;
+}
+
+function unique(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function renderToolListing(tools: ToolRegistry): string {
@@ -151,7 +277,7 @@ function compactToolTurn(turn: Turn): Turn {
  *
  * 注意: 我们不修改 session.turns 本身, 只构造一份用于 LLM 的 messages 副本.
  */
-export function buildMessages(
+export function buildSessionMessages(
   session: Session,
   budget: number,
   opts: { keepRecentExchanges?: number } = {},
@@ -207,7 +333,7 @@ export function buildMessages(
  * Runner 内部的 mid-loop compaction. 当 tool results 累积过多时,
  * 把较早的 tool message 替换为占位 (保留最近 `keepRecent` 条 tool message).
  *
- * 与 buildMessages 的区别: 这个是"已经在 messages 数组里"的版本,
+ * 与 buildSessionMessages 的区别: 这个是"已经在 messages 数组里"的版本,
  * 不依赖 Turn 结构, 直接处理 ChatMessage[].
  */
 export function compactToolResults(
