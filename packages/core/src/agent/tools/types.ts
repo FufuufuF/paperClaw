@@ -3,8 +3,12 @@
  * agent 可用工具属于 agent 子系统, 不单独放在 core 根目录.
  */
 import type { ToolDef } from '../../providers/base.js';
+import type { ToolContext } from './context.js';
+import type { JsonSchema } from './schema.js';
 
 export type { ToolDef };
+
+export type ToolScope = 'core' | 'subagent' | 'paper-search' | 'paper-read' | string;
 
 export interface ToolResult {
   success: boolean;
@@ -18,10 +22,28 @@ export interface Tool {
   name: string;
   description: string;
   /** JSON Schema for arguments (OpenAI tools 规范) */
-  parameters: Record<string, unknown>;
+  parameters: JsonSchema;
+  /** Whether this tool is side-effect free. Read-only tools can be parallelized later. */
+  readOnly?: boolean;
+  /** Whether this tool can run alongside other concurrency-safe tools. Defaults to readOnly. */
+  concurrencySafe?: boolean;
+  /** Whether this tool must run alone even if concurrent execution is enabled. */
+  exclusive?: boolean;
+  /** Scopes this tool is intended for. Missing means core. */
+  scopes?: ToolScope[];
+  /** Optional config key for future ToolLoader integration. */
+  configKey?: string;
+  /** Optional context-aware enablement hook, matching nanobot's Tool.enabled(ctx). */
+  enabled?: (ctx: ToolContext) => boolean;
   /**
    * 执行工具. 实现方负责返回 `success: false` 而不是抛错;
    * 但抛错也会被 ToolRegistry.execute 捕获并包装.
    */
-  execute(args: Record<string, unknown>): Promise<ToolResult>;
+  execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolResult>;
+}
+
+export interface PreparedToolCall {
+  tool: Tool | null;
+  args: Record<string, unknown>;
+  error: string | null;
 }

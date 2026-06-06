@@ -11,6 +11,7 @@ import type { Tool } from './types.js';
 export const echoTool: Tool = {
   name: 'echo',
   description: '回显用户给的字符串. 仅用于测试.',
+  readOnly: true,
   parameters: {
     type: 'object',
     properties: {
@@ -32,6 +33,7 @@ export const echoTool: Tool = {
 export const addTool: Tool = {
   name: 'add',
   description: '两个数相加, 返回 a+b.',
+  readOnly: true,
   parameters: {
     type: 'object',
     properties: {
@@ -54,6 +56,7 @@ export const addTool: Tool = {
 export const multiplyTool: Tool = {
   name: 'multiply',
   description: '两个数相乘, 返回 a*b.',
+  readOnly: true,
   parameters: {
     type: 'object',
     properties: {
@@ -79,6 +82,7 @@ export const multiplyTool: Tool = {
 export const bigTool: Tool = {
   name: 'big_tool',
   description: '返回一段超过 2000 字符的占位文本, 用于测试 context compaction.',
+  readOnly: true,
   parameters: {
     type: 'object',
     properties: {

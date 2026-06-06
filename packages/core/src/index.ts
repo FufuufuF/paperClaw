@@ -56,8 +56,27 @@ export {
 } from './session/config.js';
 
 // ─── Agent tools ────────────────────────────────────────────────────────
-export type { Tool, ToolResult, ToolDef } from './agent/tools/types.js';
+export type {
+  PreparedToolCall,
+  Tool,
+  ToolResult,
+  ToolDef,
+  ToolScope,
+} from './agent/tools/types.js';
 export { ToolRegistry } from './agent/tools/registry.js';
+export {
+  createToolContext,
+  type RequestContext,
+  type ToolContext,
+} from './agent/tools/context.js';
+export {
+  castParams,
+  parseToolArgs,
+  validateJsonSchemaValue,
+  validateParams,
+  type JsonSchema,
+  type ParsedToolArgs,
+} from './agent/tools/schema.js';
 export {
   echoTool,
   addTool,

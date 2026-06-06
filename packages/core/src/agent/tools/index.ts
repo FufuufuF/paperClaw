@@ -1,5 +1,24 @@
-export type { Tool, ToolResult, ToolDef } from './types.js';
+export type {
+  PreparedToolCall,
+  Tool,
+  ToolResult,
+  ToolDef,
+  ToolScope,
+} from './types.js';
 export { ToolRegistry } from './registry.js';
+export {
+  createToolContext,
+  type RequestContext,
+  type ToolContext,
+} from './context.js';
+export {
+  castParams,
+  parseToolArgs,
+  validateJsonSchemaValue,
+  validateParams,
+  type JsonSchema,
+  type ParsedToolArgs,
+} from './schema.js';
 export {
   DEFAULT_TOOLS_CONFIG,
   parseToolsConfig,

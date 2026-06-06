@@ -1,4 +1,8 @@
-import type { Tool, ToolDef, ToolResult } from './types.js';
+import type { ToolContext } from './context.js';
+import { castParams, parseToolArgs, validateParams } from './schema.js';
+import type { PreparedToolCall, Tool, ToolDef, ToolResult, ToolScope } from './types.js';
+
+const TOOL_ERROR_HINT = 'Analyze the error above and try a different approach.';
 
 /**
  * Tool 注册表. 一个进程里可以有多个 (主 agent / sub-agent 各一个),
@@ -8,8 +12,12 @@ import type { Tool, ToolDef, ToolResult } from './types.js';
  */
 export class ToolRegistry {
   private readonly tools: Map<string, Tool>;
+  private cachedToolDefs: ToolDef[] | null = null;
 
-  constructor(initial?: Iterable<Tool>) {
+  constructor(
+    initial?: Iterable<Tool>,
+    private readonly context?: ToolContext,
+  ) {
     this.tools = new Map();
     if (initial) for (const t of initial) this.register(t);
   }
@@ -19,10 +27,12 @@ export class ToolRegistry {
       throw new Error(`ToolRegistry: duplicate tool name "${tool.name}"`);
     }
     this.tools.set(tool.name, tool);
+    this.cachedToolDefs = null;
   }
 
   unregister(name: string): void {
     this.tools.delete(name);
+    this.cachedToolDefs = null;
   }
 
   has(name: string): boolean {
@@ -40,16 +50,52 @@ export class ToolRegistry {
 
   /** 返回所有 tool 的 schema (传给 LLM tools 参数). 空时返回 [] */
   getToolDefs(): ToolDef[] {
-    return Array.from(this.tools.values()).map((t) => ({
+    if (this.cachedToolDefs) return this.cachedToolDefs;
+    const defs = Array.from(this.tools.values()).map((t) => ({
       name: t.name,
       description: t.description,
       parameters: t.parameters,
     }));
+    defs.sort((a, b) => a.name.localeCompare(b.name));
+    this.cachedToolDefs = defs;
+    return defs;
   }
 
   /** 列出所有 tool 名 (供 /help 等命令展示) */
   names(): string[] {
     return Array.from(this.tools.keys());
+  }
+
+  prepareCall(name: string, args: string | Record<string, unknown>): PreparedToolCall {
+    const parsed = parseToolArgs(args);
+    if (!parsed.ok) {
+      return {
+        tool: null,
+        args: {},
+        error: `${parsed.error}\n\n[${TOOL_ERROR_HINT}]`,
+      };
+    }
+
+    const tool = this.tools.get(name);
+    if (!tool) {
+      return {
+        tool: null,
+        args: parsed.args,
+        error: `Error: Tool "${name}" not found. Available: ${this.names().join(', ') || '(none)'}\n\n[${TOOL_ERROR_HINT}]`,
+      };
+    }
+
+    const castArgs = castParams(parsed.args, tool.parameters);
+    const errors = validateParams(castArgs, tool.parameters);
+    if (errors.length > 0) {
+      return {
+        tool,
+        args: castArgs,
+        error: `Error: Invalid parameters for tool "${name}": ${errors.join('; ')}\n\n[${TOOL_ERROR_HINT}]`,
+      };
+    }
+
+    return { tool, args: castArgs, error: null };
   }
 
   /**
@@ -60,44 +106,17 @@ export class ToolRegistry {
    * 永远 resolve, 不 reject. 错误统一包装为 `{success: false, data: {error: ...}}`.
    */
   async execute(name: string, args: string | Record<string, unknown>): Promise<ToolResult> {
-    const tool = this.tools.get(name);
-    if (!tool) {
+    const prepared = this.prepareCall(name, args);
+    if (prepared.error) {
       return {
         success: false,
-        data: { error: `unknown tool: ${name}` },
-        summary: `未注册的工具 ${name}`,
+        data: { error: prepared.error },
+        summary: prepared.error.split('\n')[0],
       };
-    }
-    let parsed: Record<string, unknown>;
-    if (typeof args === 'string') {
-      const trimmed = args.trim();
-      if (trimmed === '') {
-        parsed = {};
-      } else {
-        try {
-          const obj = JSON.parse(trimmed);
-          if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
-            return {
-              success: false,
-              data: { error: `tool args must be a JSON object, got ${typeof obj}` },
-              summary: '参数解析失败',
-            };
-          }
-          parsed = obj as Record<string, unknown>;
-        } catch (err) {
-          return {
-            success: false,
-            data: { error: `JSON parse error: ${(err as Error).message}`, raw: args },
-            summary: '参数 JSON 解析失败',
-          };
-        }
-      }
-    } else {
-      parsed = args;
     }
 
     try {
-      return await tool.execute(parsed);
+      return await prepared.tool!.execute(prepared.args, this.context);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
@@ -113,12 +132,27 @@ export class ToolRegistry {
    * 给 sub-agent 受限工具集用.
    */
   scope(allowedNames: string[]): ToolRegistry {
-    const sub = new ToolRegistry();
+    const sub = new ToolRegistry(undefined, this.context);
     for (const name of allowedNames) {
       const t = this.tools.get(name);
       if (!t) throw new Error(`ToolRegistry.scope: unknown tool "${name}"`);
       sub.register(t);
     }
     return sub;
+  }
+
+  scopeByTag(scope: ToolScope): ToolRegistry {
+    const sub = new ToolRegistry(undefined, this.context);
+    for (const tool of this.tools.values()) {
+      const scopes = tool.scopes ?? ['core'];
+      if (scopes.includes(scope)) sub.register(tool);
+    }
+    return sub;
+  }
+
+  concurrencySafe(name: string): boolean {
+    const tool = this.tools.get(name);
+    if (!tool) return false;
+    return tool.concurrencySafe ?? (tool.readOnly === true && tool.exclusive !== true);
   }
 }
