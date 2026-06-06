@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { ToolCall } from '../providers/base.js';
 import { DEFAULT_SESSION_CONFIG, type SessionConfig } from './config.js';
+import type { AgentCheckpoint } from '../agent/runner.js';
 
 export type TurnRole = 'user' | 'assistant' | 'tool';
 
@@ -28,6 +29,7 @@ export interface Session {
     /** ISO */
     lastActiveAt: string;
     totalUsage: { input: number; output: number };
+    runtimeCheckpoint?: AgentCheckpoint;
   };
 }
 
