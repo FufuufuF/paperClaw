@@ -1,17 +1,32 @@
 import { resolve } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import {
   AgentLoop,
   buildBasePrompt,
+  type Channel,
   CommandRouter,
+  CronService,
+  createKnowledgeGraphTools,
+  createPaperFileTools,
+  createToolContext,
   createLLMClient,
+  FeishuChannel,
   FileSessionStore,
   loadEnv,
+  readProfile,
   registerBuiltinCommands,
   ToolRegistry,
   TraceBus,
   getRepoRoot,
 } from '@paperclaw/core';
+import { createReaderTools } from '@paperclaw/reader';
+import { createPaperSearchTools, PaperSearchState } from '@paperclaw/search';
 import { CLIChannel } from './adapter.js';
+import {
+  createPaperCronRunner,
+  PAPER_RECOMMENDATION_TASK_ID,
+  registerPaperCronCommand,
+} from './cron.js';
 import { allDemoTools } from './demo-tools.js';
 
 /**
@@ -27,22 +42,53 @@ async function main() {
   const outputDir = resolve(repoRoot, 'output');
   const sessionsDir = resolve(outputDir, 'sessions');
   const tracePath = resolve(outputDir, 'chat-trace.jsonl');
+  const profilePath = resolve(outputDir, 'profile.md');
+  const cronStatePath = resolve(outputDir, 'cron-state.json');
 
   // ── Infra ──────────────────────────────────────────────────────────
   const llm = createLLMClient(); // 默认 deepseek-chat
   const trace = new TraceBus(tracePath, 'master');
   const sessionStore = new FileSessionStore(sessionsDir);
+  const searchState = new PaperSearchState();
 
   // ── Tools (demo) ───────────────────────────────────────────────────
-  const tools = new ToolRegistry();
+  const tools = new ToolRegistry(undefined, createToolContext({
+    workspace: repoRoot,
+    outputDir,
+    timezone: 'Asia/Shanghai',
+  }));
   for (const t of allDemoTools) tools.register(t);
+  for (const t of createPaperFileTools()) tools.register(t);
+  for (const t of createKnowledgeGraphTools({ llm })) tools.register(t);
+  for (const t of createPaperSearchTools({ llm, outputDir, profilePath, trace, state: searchState })) {
+    tools.register(t);
+  }
+  for (const t of createReaderTools({ llm, outputDir, profilePath, trace })) {
+    tools.register(t);
+  }
 
   // ── Commands (内置) ────────────────────────────────────────────────
   const commands = new CommandRouter();
   registerBuiltinCommands(commands, { tools, sessionStore });
 
   // ── Channel ────────────────────────────────────────────────────────
-  const channel = new CLIChannel({ senderId: 'cli:default' });
+  const channel = createChannelFromEnv();
+
+  // ── Cron 推荐 ──────────────────────────────────────────────────────
+  const cronService = new CronService({
+    statePath: cronStatePath,
+    tasks: [{
+      id: PAPER_RECOMMENDATION_TASK_ID,
+      intervalMinutes: numberEnv('PAPERCLAW_CRON_INTERVAL_MINUTES', 60 * 24 * 7),
+      enabled: boolEnv('PAPERCLAW_CRON_ENABLED', false),
+    }],
+  });
+  const runCronRecommendation = createPaperCronRunner({
+    tools,
+    searchState,
+    maxResults: numberEnv('PAPERCLAW_CRON_MAX_RESULTS', 10),
+  });
+  registerPaperCronCommand(commands, { cronService, runCronRecommendation });
 
   // ── AgentLoop ──────────────────────────────────────────────────────
   const loop = new AgentLoop({
@@ -59,10 +105,39 @@ async function main() {
     channel,
     trace,
     buildPrompt: () => buildBasePrompt(tools),
-    sessionIdFor: () => 'cli:default',
+    status: async () => {
+      const profile = await readProfile(profilePath);
+      const pdfs = await listRecentPdfs(resolve(outputDir, 'pdfs'));
+      return {
+        provider: llm.id.split('/')[0],
+        model: llm.id.split('/').slice(1).join('/') || llm.id,
+        profile: {
+          path: profile.path,
+          readCount: profile.readSlugs.length,
+          personalization: profile.readSlugs.length >= 8 ? 'full' : profile.readSlugs.length >= 3 ? 'weak' : 'cold',
+        },
+        papers: pdfs,
+      };
+    },
+    sendProgress: true,
+    sessionIdFor: (senderId) => channel.name === 'cli' ? 'cli:default' : senderId,
   });
 
   channel.onMessage((msg) => loop.processMessage(msg));
+
+  if (boolEnv('PAPERCLAW_CRON_ENABLED', false)) {
+    await cronService.start({
+      [PAPER_RECOMMENDATION_TASK_ID]: async (ctx) => {
+        const result = await runCronRecommendation(ctx);
+        await channel.send({
+          kind: 'final',
+          text: result.summary,
+          metadata: { cron: true, taskId: PAPER_RECOMMENDATION_TASK_ID },
+        });
+        return result;
+      },
+    });
+  }
 
   // SIGINT: 让 channel.stop 优雅 close readline
   process.on('SIGINT', () => {
@@ -70,6 +145,52 @@ async function main() {
   });
 
   await channel.start();
+}
+
+function createChannelFromEnv(): Channel {
+  const mode = (process.env.PAPERCLAW_CHANNEL ?? 'cli').toLowerCase();
+  if (mode === 'feishu') {
+    return new FeishuChannel({
+      port: numberEnv('FEISHU_PORT', numberEnv('PAPERCLAW_FEISHU_PORT', 8787)),
+      path: process.env.FEISHU_PATH ?? process.env.PAPERCLAW_FEISHU_PATH ?? '/feishu/events',
+      verifyToken: process.env.FEISHU_VERIFY_TOKEN ?? process.env.PAPERCLAW_FEISHU_VERIFY_TOKEN,
+      sendWebhookUrl: process.env.FEISHU_WEBHOOK_URL ?? process.env.PAPERCLAW_FEISHU_WEBHOOK_URL,
+      allowedSenderIds: listEnv('FEISHU_ALLOWLIST') ?? listEnv('PAPERCLAW_FEISHU_ALLOWLIST'),
+    });
+  }
+  return new CLIChannel({ senderId: 'cli:default' });
+}
+
+function boolEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function listEnv(name: string): string[] | undefined {
+  const value = process.env[name];
+  if (!value) return undefined;
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+async function listRecentPdfs(dir: string): Promise<Array<{ id: string; path: string }>> {
+  try {
+    const files = await readdir(dir);
+    return files
+      .filter((name) => name.endsWith('.pdf'))
+      .slice(-20)
+      .reverse()
+      .map((name) => ({ id: name.replace(/\.pdf$/i, ''), path: resolve(dir, name) }));
+  } catch {
+    return [];
+  }
 }
 
 main().catch((err) => {

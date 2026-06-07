@@ -97,6 +97,15 @@ export {
   bigTool,
   allDemoTools,
 } from './agent/tools/demo.js';
+export { createPaperFileTools, type NoteListing } from './agent/tools/file-tools.js';
+export { createKnowledgeGraphTools } from './agent/tools/knowledge-tools.js';
+export * from './knowledge/index.js';
+export {
+  WorkspaceGuard,
+  normalizeSlug,
+  type GuardedPath,
+  type WriteResult,
+} from './security/index.js';
 
 // ─── Bus / Channels (nanobot-style split) ───────────────────────────────
 export type {
@@ -106,6 +115,23 @@ export type {
 } from './bus/events.js';
 export { MessageBus } from './bus/queue.js';
 export type { Channel } from './channels/base.js';
+export {
+  FeishuChannel,
+  normalizeFeishuEvent,
+  toFeishuTextPayload,
+  type FeishuChannelOpts,
+  type FeishuNormalizeResult,
+} from './channels/feishu.js';
+export {
+  CronService,
+  type CronRunContext,
+  type CronServiceOpts,
+  type CronStateFile,
+  type CronTaskConfig,
+  type CronTaskHandler,
+  type CronTaskResult,
+  type CronTaskState,
+} from './cron/index.js';
 
 // ─── Session ────────────────────────────────────────────────────────────
 export type {
@@ -124,7 +150,13 @@ export {
 
 // ─── Command ────────────────────────────────────────────────────────────
 export { CommandRouter } from './command/router.js';
-export type { CommandHandler, CommandResult } from './command/router.js';
+export type {
+  CommandContext,
+  CommandHandler,
+  CommandMetadata,
+  CommandResult,
+  CommandRuntimeStatus,
+} from './command/router.js';
 export {
   registerBuiltinCommands,
   makeClearCommand,
@@ -132,6 +164,12 @@ export {
   makeHistoryCommand,
   makeCostCommand,
   makeSessionCommand,
+  makeNewCommand,
+  makeModelCommand,
+  makePapersCommand,
+  makeProfileCommand,
+  makeStatusCommand,
+  makeStopCommand,
 } from './command/builtin.js';
 
 // ─── Agent ──────────────────────────────────────────────────────────────
@@ -144,7 +182,7 @@ export type {
   RunnerResult,
   ToolRunEvent,
 } from './agent/runner.js';
-export type { AgentLoopConfig } from './agent/loop.js';
+export type { AgentLoopConfig, TurnContext, TurnState } from './agent/loop.js';
 export { AgentLoop } from './agent/loop.js';
 export {
   AgentRunner,
@@ -152,6 +190,7 @@ export {
   EMPTY_FINAL_RESPONSE_MESSAGE,
   runToolLoop,
 } from './agent/runner.js';
+export { runSubagent, type SubagentResult, type SubagentSpec } from './agent/subagent.js';
 export {
   buildSessionMessages,
   compactToolResults,

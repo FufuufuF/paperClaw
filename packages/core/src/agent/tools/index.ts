@@ -31,3 +31,4 @@ export {
   bigTool,
   allDemoTools,
 } from './demo.js';
+export { createKnowledgeGraphTools } from './knowledge-tools.js';
