@@ -13,6 +13,7 @@ import {
   FeishuChannel,
   FileSessionStore,
   loadEnv,
+  type CommandRuntimeStatus,
   readProfile,
   registerBuiltinCommands,
   ToolRegistry,
@@ -21,13 +22,13 @@ import {
 } from '@paperclaw/core';
 import { createReaderTools } from '@paperclaw/reader';
 import { createPaperSearchTools, PaperSearchState } from '@paperclaw/search';
-import { CLIChannel } from './adapter.js';
+import { CLIChannel } from './channel/adapter.js';
 import {
   createPaperCronRunner,
   PAPER_RECOMMENDATION_TASK_ID,
   registerPaperCronCommand,
-} from './cron.js';
-import { allDemoTools } from './demo-tools.js';
+} from './commands/cron.js';
+import { allDemoTools } from './tools/demo-tools.js';
 
 /**
  * Chat 入口 — 组装基座, 注册 demo tools, 启动 CLI channel.
@@ -67,12 +68,27 @@ async function main() {
     tools.register(t);
   }
 
+  const getRuntimeStatus = async (): Promise<CommandRuntimeStatus> => {
+    const profile = await readProfile(profilePath);
+    const pdfs = await listRecentPdfs(resolve(outputDir, 'pdfs'));
+    return {
+      provider: llm.id.split('/')[0],
+      model: llm.id.split('/').slice(1).join('/') || llm.id,
+      profile: {
+        path: profile.path,
+        readCount: profile.readSlugs.length,
+        personalization: profile.readSlugs.length >= 8 ? 'full' : profile.readSlugs.length >= 3 ? 'weak' : 'cold',
+      },
+      papers: pdfs,
+    };
+  };
+
   // ── Commands (内置) ────────────────────────────────────────────────
   const commands = new CommandRouter();
   registerBuiltinCommands(commands, { tools, sessionStore });
 
   // ── Channel ────────────────────────────────────────────────────────
-  const channel = createChannelFromEnv();
+  const channel = createChannelFromEnv(getRuntimeStatus);
 
   // ── Cron 推荐 ──────────────────────────────────────────────────────
   const cronService = new CronService({
@@ -105,20 +121,7 @@ async function main() {
     channel,
     trace,
     buildPrompt: () => buildBasePrompt(tools),
-    status: async () => {
-      const profile = await readProfile(profilePath);
-      const pdfs = await listRecentPdfs(resolve(outputDir, 'pdfs'));
-      return {
-        provider: llm.id.split('/')[0],
-        model: llm.id.split('/').slice(1).join('/') || llm.id,
-        profile: {
-          path: profile.path,
-          readCount: profile.readSlugs.length,
-          personalization: profile.readSlugs.length >= 8 ? 'full' : profile.readSlugs.length >= 3 ? 'weak' : 'cold',
-        },
-        papers: pdfs,
-      };
-    },
+    status: getRuntimeStatus,
     sendProgress: true,
     sessionIdFor: (senderId) => channel.name === 'cli' ? 'cli:default' : senderId,
   });
@@ -139,7 +142,7 @@ async function main() {
     });
   }
 
-  // SIGINT: 让 channel.stop 优雅 close readline
+  // SIGINT: 让 channel.stop 优雅关闭 readline/Ink.
   process.on('SIGINT', () => {
     void channel.stop().finally(() => process.exit(0));
   });
@@ -147,7 +150,7 @@ async function main() {
   await channel.start();
 }
 
-function createChannelFromEnv(): Channel {
+function createChannelFromEnv(getStatus: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>): Channel {
   const mode = (process.env.PAPERCLAW_CHANNEL ?? 'cli').toLowerCase();
   if (mode === 'feishu') {
     return new FeishuChannel({
@@ -158,7 +161,7 @@ function createChannelFromEnv(): Channel {
       allowedSenderIds: listEnv('FEISHU_ALLOWLIST') ?? listEnv('PAPERCLAW_FEISHU_ALLOWLIST'),
     });
   }
-  return new CLIChannel({ senderId: 'cli:default' });
+  return new CLIChannel({ senderId: 'cli:default', getStatus });
 }
 
 function boolEnv(name: string, fallback: boolean): boolean {
