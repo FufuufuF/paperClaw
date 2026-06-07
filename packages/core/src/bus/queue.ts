@@ -9,6 +9,7 @@ export class MessageBus {
   private waiters: Array<(msg: InboundMessage) => void> = [];
   private buffer: InboundMessage[] = [];
   private handlers: Array<(msg: InboundMessage) => Promise<void>> = [];
+  private outboundHandlers: Array<(msg: OutboundMessage) => Promise<void> | void> = [];
 
   attach(channel: Channel): void {
     this.channel = channel;
@@ -44,9 +45,16 @@ export class MessageBus {
     this.handlers.push(handler);
   }
 
+  /** 测试或 rich channel 可订阅 outbound envelope, 不影响实际发送. */
+  onOutbound(handler: (msg: OutboundMessage) => Promise<void> | void): void {
+    this.outboundHandlers.push(handler);
+  }
+
   /** 把回复路由到当前 channel */
   async respond(msg: OutboundMessage): Promise<void> {
     if (!this.channel) throw new Error('MessageBus: no channel attached');
-    await this.channel.send(msg);
+    const outbound = { ...msg, kind: msg.kind ?? 'final' };
+    for (const handler of this.outboundHandlers) await handler(outbound);
+    await this.channel.send(outbound);
   }
 }

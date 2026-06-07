@@ -2,3 +2,13 @@ export { searchArxiv, type ArxivCandidate } from './tools/arxiv.js';
 export { triageBatch, type TriageItem, type TriageVerdict } from './tools/triage.js';
 export { downloadPdf, downloadPdfs, type DownloadResult } from './tools/download.js';
 export { decomposeQuery, decideReplan, inferInterestForCron } from './flows/planner.js';
+export {
+  createDownloadPaperTool,
+  createPaperSearchTool,
+  createPaperSearchTools,
+  PaperSearchState,
+  type PaperSearchResult,
+  type PaperSearchToolOpts,
+  type SearchTrace,
+  type ShortlistItem,
+} from './paper-search-tool.js';

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@paperclaw/core": "workspace:*",
+    "@paperclaw/reader": "workspace:*",
     "@paperclaw/search": "workspace:*"
   },
   "devDependencies": {

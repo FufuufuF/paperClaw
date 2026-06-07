@@ -33,6 +33,17 @@ export interface Tool {
   scopes?: ToolScope[];
   /** Optional config key for future ToolLoader integration. */
   configKey?: string;
+  /**
+   * Side-effecting tools can require an explicit user intent in the current
+   * turn. AgentRunner enforces this before executing the tool, so prompt drift
+   * cannot silently download PDFs or edit notes.
+   */
+  confirmation?: {
+    required: boolean;
+    action: string;
+    patterns: string[];
+    guidance: string;
+  };
   /** Optional context-aware enablement hook, matching nanobot's Tool.enabled(ctx). */
   enabled?: (ctx: ToolContext) => boolean;
   /**

@@ -1,4 +1,37 @@
 import type { Session } from '../session/manager.js';
+import type { ToolRegistry } from '../agent/tools/registry.js';
+import type { LLMClient } from '../providers/base.js';
+
+export interface CommandMetadata {
+  command: string;
+  title: string;
+  description: string;
+  argHint?: string;
+}
+
+export interface CommandRuntimeStatus {
+  provider?: string;
+  model?: string;
+  activeTask?: boolean;
+  profile?: {
+    path: string;
+    readCount: number;
+    personalization: 'cold' | 'weak' | 'full';
+  };
+  papers?: Array<{ id: string; title?: string; path?: string; createdAt?: string }>;
+}
+
+export interface CommandContext {
+  session: Session;
+  args: string;
+  command: string;
+  metadata: CommandMetadata;
+  tools?: ToolRegistry;
+  llm?: LLMClient;
+  status?: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>;
+  createSession?: (id: string) => Session;
+  cancelActiveTask?: (sessionId: string) => boolean;
+}
 
 export interface CommandResult {
   text: string;
@@ -7,11 +40,11 @@ export interface CommandResult {
    * AgentLoop 会用它替换内存中的 session 并持久化.
    */
   mutatedSession?: Session;
+  metadata?: Record<string, unknown>;
 }
 
 export type CommandHandler = (
-  args: string,
-  session: Session,
+  ctx: CommandContext,
 ) => CommandResult | Promise<CommandResult>;
 
 /**
@@ -21,31 +54,54 @@ export type CommandHandler = (
  * 对齐 nanobot 的 `command/router.py`: router 只做 dispatch, 内置命令放 builtin.ts.
  */
 export class CommandRouter {
-  private readonly handlers = new Map<string, CommandHandler>();
+  private readonly entries = new Map<string, { metadata: CommandMetadata; handler: CommandHandler }>();
 
-  register(name: string, handler: CommandHandler): void {
-    if (!name.startsWith('/')) {
-      throw new Error(`CommandRouter: command name must start with /, got "${name}"`);
+  register(nameOrMetadata: string | CommandMetadata, handler: CommandHandler): void {
+    const metadata = typeof nameOrMetadata === 'string'
+      ? {
+          command: nameOrMetadata,
+          title: nameOrMetadata,
+          description: '',
+        }
+      : nameOrMetadata;
+    if (!metadata.command.startsWith('/')) {
+      throw new Error(`CommandRouter: command name must start with /, got "${metadata.command}"`);
     }
-    this.handlers.set(name, handler);
+    this.entries.set(metadata.command, { metadata, handler });
   }
 
   has(name: string): boolean {
-    return this.handlers.has(name);
+    return this.entries.has(name);
   }
 
   list(): string[] {
-    return Array.from(this.handlers.keys()).sort();
+    return Array.from(this.entries.keys()).sort();
   }
 
-  async handle(input: string, session: Session): Promise<CommandResult | null> {
+  listMetadata(): CommandMetadata[] {
+    return Array.from(this.entries.values())
+      .map((entry) => entry.metadata)
+      .sort((a, b) => a.command.localeCompare(b.command));
+  }
+
+  async handle(
+    input: string,
+    session: Session,
+    runtime: Omit<CommandContext, 'args' | 'command' | 'metadata' | 'session'> = {},
+  ): Promise<CommandResult | null> {
     const trimmed = input.trim();
     if (!trimmed.startsWith('/')) return null;
     const sep = trimmed.search(/\s/);
     const name = sep === -1 ? trimmed : trimmed.slice(0, sep);
     const args = sep === -1 ? '' : trimmed.slice(sep + 1).trim();
-    const handler = this.handlers.get(name);
-    if (!handler) return null;
-    return await handler(args, session);
+    const entry = this.entries.get(name);
+    if (!entry) return null;
+    return await entry.handler({
+      ...runtime,
+      session,
+      args,
+      command: name,
+      metadata: entry.metadata,
+    });
   }
 }

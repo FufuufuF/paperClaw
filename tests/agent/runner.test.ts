@@ -6,6 +6,7 @@ import {
   ToolRegistry,
   type AgentCheckpoint,
   type ChatMessage,
+  type Tool,
 } from '../../packages/core/src/index.js';
 import { assert, MockLLM } from '../fixtures/index.js';
 
@@ -183,6 +184,74 @@ async function testLengthRecovery(): Promise<void> {
   assert(result.newTurns.map((t) => t.role).join(',') === 'assistant,assistant', 'synthetic recovery prompt is not persisted as user turn');
 }
 
+async function testConfirmationGateBlocksSideEffectTool(): Promise<void> {
+  let executed = false;
+  const dangerousTool: Tool = {
+    name: 'dangerous_download',
+    description: 'test side-effect tool',
+    parameters: { type: 'object', properties: {} },
+    confirmation: {
+      required: true,
+      action: 'download PDFs',
+      patterns: ['下载', 'download'],
+      guidance: 'Ask before downloading.',
+    },
+    async execute() {
+      executed = true;
+      return { success: true, data: { ok: true } };
+    },
+  };
+  const h = makeRunner(new ToolRegistry([dangerousTool]));
+  h.llm.enqueue(
+    {
+      text: 'I will download it.',
+      toolCalls: [{ id: 'call_download', name: 'dangerous_download', arguments: '{}' }],
+      usage: { input: 10, output: 4 },
+    },
+    { text: '请确认是否下载 PDF。', usage: { input: 12, output: 6 } },
+  );
+
+  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: '帮我找一篇 agent 论文' }]));
+  const toolContent = result.newTurns.find((turn) => turn.role === 'tool')?.content ?? '';
+
+  assert(executed === false, 'confirmation gate blocks side-effect tool execution');
+  assert(toolContent.includes('requires explicit user confirmation'), 'blocked tool result explains confirmation requirement');
+  assert(result.text.includes('确认'), 'model can ask for confirmation after blocked tool');
+}
+
+async function testConfirmationGateAllowsExplicitIntent(): Promise<void> {
+  let executed = false;
+  const dangerousTool: Tool = {
+    name: 'dangerous_download',
+    description: 'test side-effect tool',
+    parameters: { type: 'object', properties: {} },
+    confirmation: {
+      required: true,
+      action: 'download PDFs',
+      patterns: ['下载', 'download'],
+      guidance: 'Ask before downloading.',
+    },
+    async execute() {
+      executed = true;
+      return { success: true, data: { ok: true }, summary: 'downloaded' };
+    },
+  };
+  const h = makeRunner(new ToolRegistry([dangerousTool]));
+  h.llm.enqueue(
+    {
+      text: 'Downloading.',
+      toolCalls: [{ id: 'call_download', name: 'dangerous_download', arguments: '{}' }],
+      usage: { input: 10, output: 4 },
+    },
+    { text: '已下载。', usage: { input: 12, output: 6 } },
+  );
+
+  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: '请下载第 1 篇 PDF' }]));
+
+  assert(executed === true, 'confirmation gate allows explicit download intent');
+  assert(result.toolEvents[0]?.status === 'ok', 'allowed side-effect tool reports ok');
+}
+
 async function main(): Promise<void> {
   await testFinalResponse();
   await testToolCallExecution();
@@ -192,6 +261,8 @@ async function main(): Promise<void> {
   await testMessageGovernanceRepairsModelContextOnly();
   await testDropOrphanToolResults();
   await testLengthRecovery();
+  await testConfirmationGateBlocksSideEffectTool();
+  await testConfirmationGateAllowsExplicitIntent();
   console.log('✓ runner tests passed.');
 }
 

@@ -41,9 +41,16 @@ export class CLIChannel implements Channel {
   }
 
   async send(msg: OutboundMessage): Promise<void> {
-    // CLI 简单直出. 给一个 "clawbot:" 前缀让用户看清是 bot 在说话.
+    // CLI 简单直出. progress/tool_hint 用更轻的前缀, final 仍用 clawbot.
+    const kind = msg.kind ?? 'final';
+    const prefix =
+      kind === 'progress' ? '...' :
+      kind === 'tool_hint' ? 'tool' :
+      kind === 'error' ? 'error' :
+      'clawbot';
     const lines = msg.text.split('\n');
-    const padded = lines.map((l, i) => (i === 0 ? `clawbot: ${l}` : `         ${l}`));
+    const pad = ' '.repeat(prefix.length);
+    const padded = lines.map((l, i) => (i === 0 ? `${prefix}: ${l}` : `${pad}  ${l}`));
     stdout.write(padded.join('\n') + '\n');
   }
 

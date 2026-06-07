@@ -167,6 +167,11 @@ async function testCommands(): Promise<void> {
     assert(h.channel.lastText().includes('/clear'), '/help 列出 /clear');
     assert(h.llm.receivedMessageRoles.length === 0, '/help 没调 LLM');
 
+    await h.channel.simulate('/status');
+    assert(h.channel.lastText().includes('provider:'), '/status 显示 provider');
+    assert(h.channel.lastText().includes('model:'), '/status 显示 model');
+    assert(h.channel.lastText().includes('tools:'), '/status 显示 tools');
+
     // 一轮真聊
     h.llm.enqueue({ text: '我记住了, 你叫小明.', usage: { input: 30, output: 10 } });
     await h.channel.simulate('我叫小明');
@@ -204,9 +209,10 @@ async function testCompaction(): Promise<void> {
     assert(h.channel.sent.length === 1, '一条最终回复');
 
     // 验证压缩: 最后一轮 LLM 调用看到的 tool messages 中, 最早的几条 content 应较短
-    const lastMsgs = h.llm.receivedMessageRoles.at(-1)!;
-    const toolCount = lastMsgs.filter((r) => r === 'tool').length;
-    assert(toolCount >= 3, `最后一轮至少 3 条 tool messages (got ${toolCount})`);
+    const lastMessages = h.llm.receivedMessages.at(-1)!.messages;
+    const toolCount = lastMessages.filter((m) => m.role === 'tool').length;
+    assert(toolCount >= 1, `最后一轮至少保留 1 条 tool message (got ${toolCount})`);
+    assert(toolCount < 5, `最后一轮应压缩/裁剪旧 tool messages (got ${toolCount})`);
 
     // 看 session.turns 里的所有 tool turn — 它们的原始 content 仍在 session 里 (compaction 只动 messages 副本)
     const session = await h.sessionStore.load('cli:default');
@@ -231,6 +237,34 @@ async function testChannelDecoupling(): Promise<void> {
   });
 }
 
+// ─── extra: runtime context + session lock ──────────────────────────────
+async function testRuntimeContextAndSessionLock(): Promise<void> {
+  console.log('\n── extra: runtime context / session lock ──');
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    h.llm.enqueue({ text: 'hi', usage: { input: 10, output: 3 } });
+    await h.channel.simulate('你好');
+    const firstMessage = h.llm.receivedMessages[0]!.messages[0]!.content;
+    assert(firstMessage.includes('Runtime Context'), 'LLM current turn includes runtime context');
+    assert(firstMessage.includes('Session ID: cli:default'), 'runtime context includes session id');
+  });
+
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    h.llm.enqueue(
+      { text: 'first done', usage: { input: 10, output: 3 } },
+      { text: 'second done', usage: { input: 10, output: 3 } },
+    );
+    await Promise.all([
+      h.loop.processMessage({ id: 'm1', senderId: 'cli:default', text: 'first', timestamp: Date.now() }),
+      h.loop.processMessage({ id: 'm2', senderId: 'cli:default', text: 'second', timestamp: Date.now() }),
+    ]);
+    const session = await h.sessionStore.load('cli:default');
+    assert(session!.turns.length === 4, `session lock preserved both turns (got ${session!.turns.length})`);
+    assert(h.channel.sent.length === 2, 'both concurrent messages got responses');
+  });
+}
+
 // ─── extra: 错误路径 — 未注册 / 命令不走 LLM, JSON parse 错误回包 ────────
 async function testErrorPaths(): Promise<void> {
   console.log('\n── extra: 错误路径 ──');
@@ -247,6 +281,61 @@ async function testErrorPaths(): Promise<void> {
   });
 }
 
+// ─── extra: AgentLoop 新 FSM 行为 — progress 和错误持久化 ───────────────
+async function testLoopProgressAndErrorPersistence(): Promise<void> {
+  console.log('\n── extra: AgentLoop progress / error persistence ──');
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    const progressLoop = new AgentLoop({
+      sessionStore: h.sessionStore,
+      commands: h.commands,
+      runner: {
+        tools: h.tools,
+        llm: h.llm,
+        maxIterations: 5,
+        contextBudget: 4000,
+        agentId: 'master',
+      },
+      channel: h.channel,
+      buildPrompt: () => buildBasePrompt(h.tools),
+      sessionIdFor: () => 'cli:default',
+      sendProgress: true,
+    });
+    h.channel.reset();
+
+    h.llm.enqueue(
+      {
+        text: 'calling echo',
+        toolCalls: [{ id: 'call_1', name: 'echo', arguments: '{"text":"hello"}' }],
+        usage: { input: 10, output: 2 },
+      },
+      { text: 'done hello', usage: { input: 20, output: 4 } },
+    );
+    await progressLoop.processMessage({
+      id: 'progress-1',
+      senderId: 'cli:default',
+      text: 'call echo',
+      timestamp: Date.now(),
+    });
+    assert(h.channel.sent.some((msg) => msg.kind === 'tool_hint'), 'progress tool_hint envelope emitted');
+    assert(h.channel.sent.at(-1)?.kind === 'final', 'final envelope emitted last');
+  });
+
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    try {
+      await h.channel.simulate('this will make mock LLM throw');
+    } catch {
+      // AgentLoop rethrows after sending and persisting the error turn.
+    }
+    const session = await h.sessionStore.load('cli:default');
+    assert(session !== null, 'errored session was saved');
+    assert(session!.turns[0]!.role === 'user', 'user turn was early-persisted');
+    assert(session!.turns.at(-1)?.role === 'assistant', 'assistant error turn was persisted');
+    assert(h.channel.sent.at(-1)?.kind === 'error', 'error envelope sent');
+  });
+}
+
 // ─── 主入口 ──────────────────────────────────────────────────────────────
 async function main() {
   await testBasicChat();
@@ -256,7 +345,9 @@ async function main() {
   await testCommands();
   await testCompaction();
   await testChannelDecoupling();
+  await testRuntimeContextAndSessionLock();
   await testErrorPaths();
+  await testLoopProgressAndErrorPersistence();
   console.log('\n✓ 所有 smoke 测试通过.');
 }
 
