@@ -10,7 +10,7 @@ import {
   createPaperCronRunner,
   PAPER_RECOMMENDATION_TASK_ID,
   registerPaperCronCommand,
-} from '../../packages/cli/src/cron.js';
+} from '../../packages/cli/src/commands/cron.js';
 import { PaperSearchState, type PaperSearchResult } from '../../packages/search/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 

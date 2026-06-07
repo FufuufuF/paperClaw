@@ -552,3 +552,78 @@ paperClaw 最重要的不是某一个单独功能，而是形成了一个闭环:
 ```
 
 这个闭环体现了课程项目想展示的重点: 一个 agent 如何通过工具调用和长期记忆完成复杂任务。
+
+## 12. 未完成内容与后续计划
+
+当前仓库已经具备最小可演示闭环，但以下功能还没有完全完成。
+
+### 12.1 CLI 体验增强
+
+已完成 Ink 主 UI、plain fallback、状态栏、基础 loading、高亮和工具进度展示。
+
+后续还需要:
+
+- 优化 `/help`、`/status`、`/papers`、`/cost`、`/cron status` 的专门排版。
+- 优化长回答滚动和大段文本展示，避免输入区被长输出影响。
+- 对论文 shortlist、PDF 路径、note 路径做结构化组件展示。
+- 增加论文候选多选下载 UI。
+- 增加 `/verbose`、reasoning 开关、主题配置等高级控制。
+
+### 12.2 搜索与推荐质量
+
+已完成 arXiv 搜索、候选 triage、shortlist、下载 handoff 和 cron 推荐最小闭环。
+
+后续还需要:
+
+- 增加页数或 PDF 文本长度检测，减少“短论文”判断依赖模型猜测。
+- 更严格地区分“直接相关论文”和“方法论可迁移论文”。
+- 加强 cron 推荐的个性化解释和评估闭环。
+- 将搜索结果从纯文本编号升级为结构化 UI 渲染。
+
+### 12.3 精读、笔记与 Profile
+
+已完成 PDF 文本抽取、逐节阅读计划、section note 写入和 profile 基础更新。
+
+后续还需要:
+
+- 在整篇论文读完后自动生成综合总结和最终 verdict。
+- 支持多 section synthesis 和多论文比较。
+- 规范 section note 写入格式，避免笔记内部重复标题。
+- 增强 profile 的长期兴趣建模，而不只是基础读过索引和简单偏好。
+- 完成 `## 待问用户` 的交互式纠错闭环。
+
+### 12.4 知识图谱闭环
+
+已完成轻量 `knowledge-index.json`、节点/关系工具、pending link 工具和基础测试。
+
+后续还需要:
+
+- 在读完论文后自动提出候选论文关系。
+- 增加 pending links 的用户 review 和批量确认体验。
+- 让推荐结果更稳定地引用知识图谱关系作为解释依据。
+- 完善 cheap filter、rerank、consolidation 的关系发现流程。
+
+### 12.5 Agent 基座增强
+
+当前基座已经有 session、command、tool、provider、context、runner、channel 和 cron。
+
+后续还需要:
+
+- 完成 runtime checkpoint 的真正恢复闭环。
+- 支持 streaming 和 reasoning 输出。
+- 增强 provider fallback 策略。
+- 增加后台异步 subagent manager。
+- 评估并实现 `/goal` 长期目标、`/dream` 自动整理、history archive。
+- 评估 tool 自动 discovery 和 MCP 接入。
+- 评估 OpenAI-compatible API、Web UI、heartbeat 等非核心能力。
+
+### 12.6 Feishu 与部署体验
+
+已完成 Feishu webhook 文本通道、事件归一化、allowlist 和基础发送。
+
+后续还需要:
+
+- 将 Feishu 结果升级为 card 格式。
+- 增加按钮式确认下载、确认精读等交互。
+- 完善群聊 `@clawbot` 的使用体验。
+- 增加部署脚本、健康检查和日志查看能力。
