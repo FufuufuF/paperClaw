@@ -20,6 +20,7 @@ async function testStoreInitializesAndQueriesGraph(): Promise<void> {
     await store.upsertNode({
       id: '2401.07324',
       title: 'Small LLMs Are Weak Tool Learners',
+      summary_short: '研究小模型在 tool learning 场景中的能力短板。',
       note_path: join(outputDir, 'run-a/papers/2401.07324.md'),
       arxiv_id: '2401.07324',
       status: 'reading',
@@ -28,6 +29,7 @@ async function testStoreInitializesAndQueriesGraph(): Promise<void> {
     await store.upsertNode({
       id: 'agent-tool-failure-harness',
       title: 'Agent Tool Failure Harness',
+      summary_short: '提出用于观察 agent 工具调用失败和恢复行为的评估 harness。',
       note_path: join(outputDir, 'run-a/papers/agent-tool-failure-harness.md'),
       status: 'read',
       verdict: 'adopt',
@@ -49,6 +51,7 @@ async function testStoreInitializesAndQueriesGraph(): Promise<void> {
     const neighbors = await store.neighbors({ id: '2401.07324', limit: 5 });
     assert(neighbors.neighbors.length === 1, 'knowledge store returns one-hop neighbors');
     assert(neighbors.neighbors[0].paper_id === 'agent-tool-failure-harness', 'neighbor result includes target paper id');
+    assert(neighbors.neighbors[0].summary_short?.includes('工具调用失败'), 'neighbor result includes summary_short');
     assert(neighbors.neighbors[0].reason_short.includes('互补'), 'neighbor result includes short reason');
 
     const fullLink = await store.getLink(link.link.id);
@@ -56,7 +59,11 @@ async function testStoreInitializesAndQueriesGraph(): Promise<void> {
 
     const search = await store.searchNodes({ query: 'tool', limit: 10 });
     assert(search.results.length === 2, 'node search matches title/id metadata');
+    assert(search.results.some((item) => item.summary_short?.includes('tool learning')), 'node search returns summary_short');
     assert(search.results.every((item) => !('content' in item)), 'node search does not return note content');
+
+    const recent = await store.recentNodes({ status: ['read'], limit: 1 });
+    assert(recent.results[0]?.id === 'agent-tool-failure-harness', 'recentNodes returns latest read node');
   });
 }
 
@@ -155,7 +162,7 @@ async function testToolMetadataAndExecution(): Promise<void> {
   await withTempDir(async (dir) => {
     const outputDir = join(dir, 'output');
     const tools = createKnowledgeGraphTools();
-    const readToolNames = new Set(['kg_get_node', 'kg_neighbors', 'kg_get_link', 'kg_search_nodes', 'kg_search_links', 'kg_suggest_links', 'kg_list_pending_links']);
+    const readToolNames = new Set(['kg_get_node', 'kg_recent_nodes', 'kg_neighbors', 'kg_get_link', 'kg_search_nodes', 'kg_search_links', 'kg_suggest_links', 'kg_list_pending_links']);
     for (const tool of tools) {
       if (readToolNames.has(tool.name)) {
         assert(tool.readOnly === true, `${tool.name} is read-only`);
@@ -170,6 +177,7 @@ async function testToolMetadataAndExecution(): Promise<void> {
     const write = await registry.execute('kg_upsert_node', {
       id: 'paper-a',
       title: 'Paper A',
+      summary_short: 'Paper A 的短摘要。',
       note_path: join(outputDir, 'run/papers/paper-a.md'),
       status: 'reading',
       verdict: 'maybe',
@@ -178,9 +186,15 @@ async function testToolMetadataAndExecution(): Promise<void> {
     const read = await registry.execute('kg_get_node', { id: 'paper-a' });
     assert(read.success === true, 'kg_get_node executes through tool registry');
     assert(JSON.stringify(read.data).includes('Paper A'), 'kg_get_node returns node metadata');
+    assert(JSON.stringify(read.data).includes('Paper A 的短摘要'), 'kg_get_node returns summary_short');
+
+    const recent = await registry.execute('kg_recent_nodes', { limit: 1 });
+    assert(recent.success === true, 'kg_recent_nodes executes through tool registry');
+    assert(JSON.stringify(recent.data).includes('paper-a'), 'kg_recent_nodes returns recent node data');
 
     const index = JSON.parse(await readFile(join(outputDir, 'knowledge-index.json'), 'utf8')) as KnowledgeIndex;
     assert(index.papers['paper-a']?.title === 'Paper A', 'tool write persists output/knowledge-index.json');
+    assert(index.papers['paper-a']?.summary_short === 'Paper A 的短摘要。', 'tool write persists summary_short');
   });
 }
 
