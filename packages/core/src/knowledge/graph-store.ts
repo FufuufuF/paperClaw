@@ -52,10 +52,18 @@ export interface SearchNodesInput {
 export interface SearchNodeResult {
   id: string;
   title: string;
+  summary_short?: string;
   note_path: string;
+  arxiv_id?: string;
   status: KnowledgePaperStatus;
   verdict: KnowledgePaperVerdict;
   matched: string[];
+}
+
+export interface RecentNodesInput {
+  status?: KnowledgePaperStatus[];
+  verdict?: KnowledgePaperVerdict[];
+  limit?: number;
 }
 
 export interface SearchLinksInput {
@@ -76,6 +84,7 @@ export interface NeighborInput {
 export interface UpsertNodeInput {
   id: string;
   title?: string;
+  summary_short?: string;
   note_path?: string;
   arxiv_id?: string;
   status?: KnowledgePaperStatus;
@@ -183,10 +192,40 @@ export class KnowledgeGraphStore {
       results: rows.slice(0, limit).map(({ node, matched }) => ({
         id: node.id,
         title: node.title,
+        summary_short: node.summary_short,
         note_path: node.note_path,
+        arxiv_id: node.arxiv_id,
         status: node.status,
         verdict: node.verdict,
         matched,
+      })),
+      truncated: rows.length > limit,
+      total: rows.length,
+    };
+  }
+
+  async recentNodes(input: RecentNodesInput = {}): Promise<{ results: SearchNodeResult[]; truncated: boolean; total: number }> {
+    const index = await this.load();
+    const limit = clampLimit(input.limit);
+    const statuses = new Set(input.status ?? []);
+    const verdicts = new Set(input.verdict ?? []);
+    const rows = Object.values(index.papers)
+      .filter((node) => {
+        if (statuses.size > 0 && !statuses.has(node.status)) return false;
+        if (verdicts.size > 0 && !verdicts.has(node.verdict)) return false;
+        return true;
+      })
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
+    return {
+      results: rows.slice(0, limit).map((node) => ({
+        id: node.id,
+        title: node.title,
+        summary_short: node.summary_short,
+        note_path: node.note_path,
+        arxiv_id: node.arxiv_id,
+        status: node.status,
+        verdict: node.verdict,
+        matched: [],
       })),
       truncated: rows.length > limit,
       total: rows.length,
@@ -212,6 +251,8 @@ export class KnowledgeGraphStore {
       rows.push({
         paper_id: neighborId,
         title: neighbor?.title ?? neighborId,
+        arxiv_id: neighbor?.arxiv_id,
+        summary_short: neighbor?.summary_short,
         direction: outbound && inbound ? 'both' : outbound ? 'out' : 'in',
         link_id: link.id,
         link_type: link.type,
@@ -256,6 +297,7 @@ export class KnowledgeGraphStore {
     const node: KnowledgePaperNode = {
       id,
       title: input.title?.trim() || previous?.title || id,
+      summary_short: cleanOptional(input.summary_short) ?? previous?.summary_short,
       note_path: input.note_path?.trim() || previous?.note_path || '',
       arxiv_id: input.arxiv_id?.trim() || previous?.arxiv_id,
       status: input.status ?? previous?.status ?? 'unread',
@@ -532,6 +574,7 @@ function normalizeIndex(value: unknown, now: string): KnowledgeIndex {
     const node: KnowledgePaperNode = {
       id,
       title: asString(item.title) || id,
+      summary_short: optionalString(item.summary_short),
       note_path: asString(item.note_path),
       arxiv_id: optionalString(item.arxiv_id),
       status: parseStatus(item.status),
@@ -649,6 +692,7 @@ function matchedNodeFields(node: KnowledgePaperNode, queryTokens: string[]): str
   const fields: Array<[string, string]> = [
     ['id', node.id],
     ['title', node.title],
+    ['summary_short', node.summary_short ?? ''],
     ['arxiv_id', node.arxiv_id ?? ''],
     ['note_path', node.note_path],
   ];
@@ -755,6 +799,11 @@ function asString(value: unknown): string {
 
 function optionalString(value: unknown): string | undefined {
   const text = asString(value);
+  return text || undefined;
+}
+
+function cleanOptional(value: string | undefined): string | undefined {
+  const text = value?.trim();
   return text || undefined;
 }
 
