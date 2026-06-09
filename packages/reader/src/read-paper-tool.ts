@@ -3,12 +3,12 @@ import type { Dirent } from 'node:fs';
 import { basename, dirname, resolve, sep } from 'node:path';
 import {
   getRunId,
-  KnowledgeGraphStore,
   type LLMClient,
   type Tool,
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
+import { KnowledgeGraphStore } from '@paperclaw/knowledge';
 import { extractPdfText } from './pdf.js';
 import { updateProfileFromNote } from './profile-updater.js';
 import { inferTitleFromText, splitPaperSections, type PaperSection } from './sections.js';

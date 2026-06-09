@@ -2,32 +2,32 @@ import { resolve } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import {
   AgentLoop,
-  buildBasePrompt,
   type Channel,
   CommandRouter,
+  ContextBuilder,
   CronService,
-  createKnowledgeGraphTools,
-  createPaperFileTools,
   createToolContext,
   createLLMClient,
   FeishuChannel,
   FileSessionStore,
   loadEnv,
   type CommandRuntimeStatus,
-  readProfile,
   registerBuiltinCommands,
   ToolRegistry,
   TraceBus,
   getRepoRoot,
 } from '@paperclaw/core';
-import { createReaderTools } from '@paperclaw/reader';
-import { createPaperSearchTools, PaperSearchState } from '@paperclaw/search';
+import { createKnowledgeGraphTools, KNOWLEDGE_SKILLS_DIR } from '@paperclaw/knowledge';
+import { readProfile, PROFILE_SKILLS_DIR } from '@paperclaw/profile';
+import { createPaperFileTools, createReaderTools, PAPER_READ_SKILLS_DIR } from '@paperclaw/reader';
+import { createPaperSearchTools, PAPER_SEARCH_SKILLS_DIR, PaperSearchState } from '@paperclaw/search';
 import { CLIChannel } from './channel/adapter.js';
 import {
   createPaperCronRunner,
   PAPER_RECOMMENDATION_TASK_ID,
   registerPaperCronCommand,
 } from './commands/cron.js';
+import { registerPaperCommands } from './commands/paper.js';
 import { allDemoTools } from './tools/demo-tools.js';
 
 /**
@@ -51,6 +51,16 @@ async function main() {
   const trace = new TraceBus(tracePath, 'master');
   const sessionStore = new FileSessionStore(sessionsDir);
   const searchState = new PaperSearchState();
+  const contextBuilder = new ContextBuilder({
+    workspace: repoRoot,
+    timezone: 'Asia/Shanghai',
+    builtinSkillsDirs: [
+      PAPER_SEARCH_SKILLS_DIR,
+      PAPER_READ_SKILLS_DIR,
+      KNOWLEDGE_SKILLS_DIR,
+      PROFILE_SKILLS_DIR,
+    ],
+  });
 
   // ── Tools (demo) ───────────────────────────────────────────────────
   const tools = new ToolRegistry(undefined, createToolContext({
@@ -86,6 +96,7 @@ async function main() {
   // ── Commands (内置) ────────────────────────────────────────────────
   const commands = new CommandRouter();
   registerBuiltinCommands(commands, { tools, sessionStore });
+  registerPaperCommands(commands);
 
   // ── Channel ────────────────────────────────────────────────────────
   const channel = createChannelFromEnv(getRuntimeStatus);
@@ -120,7 +131,7 @@ async function main() {
     },
     channel,
     trace,
-    buildPrompt: () => buildBasePrompt(tools),
+    buildPrompt: () => contextBuilder.buildSystemPrompt(tools),
     status: getRuntimeStatus,
     sendProgress: true,
     sessionIdFor: (senderId) => channel.name === 'cli' ? 'cli:default' : senderId,

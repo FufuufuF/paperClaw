@@ -8,6 +8,8 @@
   },
   "dependencies": {
     "@paperclaw/core": "workspace:*",
+    "@paperclaw/knowledge": "workspace:*",
+    "@paperclaw/profile": "workspace:*",
     "@paperclaw/reader": "workspace:*",
     "@paperclaw/search": "workspace:*",
     "ink": "^7.0.5",

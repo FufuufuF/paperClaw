@@ -1,5 +1,5 @@
-import { KnowledgeGraphStore } from '../../knowledge/graph-store.js';
-import type { LLMClient } from '../../providers/base.js';
+import type { LLMClient, Tool, ToolContext, ToolResult } from '@paperclaw/core';
+import { KnowledgeGraphStore } from './graph-store.js';
 import type {
   KnowledgeCreatedBy,
   KnowledgeEvidencePointer,
@@ -8,9 +8,7 @@ import type {
   KnowledgePaperStatus,
   KnowledgePaperVerdict,
   PendingLinkStatus,
-} from '../../knowledge/types.js';
-import type { ToolContext } from './context.js';
-import type { Tool, ToolResult } from './types.js';
+} from './types.js';
 
 export interface KnowledgeGraphToolsOpts {
   llm?: LLMClient;

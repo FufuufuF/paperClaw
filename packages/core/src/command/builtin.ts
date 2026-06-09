@@ -130,39 +130,6 @@ export function makeStopCommand(): CommandHandler {
   };
 }
 
-/** /profile — 展示论文 profile 的 cold/weak/full 状态. */
-export function makeProfileCommand(): CommandHandler {
-  return async (ctx) => {
-    const status = await ctx.status?.();
-    const profile = status?.profile;
-    if (!profile) return { text: 'profile: not configured' };
-    return {
-      text: [
-        `profile path: ${profile.path}`,
-        `read papers: ${profile.readCount}`,
-        `personalization: ${profile.personalization}`,
-      ].join('\n'),
-    };
-  };
-}
-
-/** /papers — 展示最近下载/精读的论文产物. */
-export function makePapersCommand(): CommandHandler {
-  return async (ctx) => {
-    const status = await ctx.status?.();
-    const papers = status?.papers ?? [];
-    if (papers.length === 0) return { text: '暂无论文产物.' };
-    return {
-      text: [
-        '最近论文:',
-        ...papers.slice(0, 20).map((paper, idx) =>
-          `${idx + 1}. ${paper.title ?? paper.id}${paper.path ? ` — ${paper.path}` : ''}`,
-        ),
-      ].join('\n'),
-    };
-  };
-}
-
 export function registerBuiltinCommands(
   router: CommandRouter,
   deps: {
@@ -180,8 +147,6 @@ export function registerBuiltinCommands(
   register(router, { command: '/status', title: 'Status', description: '查看 provider/model/session/profile/tools 状态' }, makeStatusCommand({ tools: deps.tools }));
   register(router, { command: '/model', title: 'Model', description: '查看当前模型', argHint: '[preset]' }, makeModelCommand());
   register(router, { command: '/stop', title: 'Stop', description: '请求停止当前任务' }, makeStopCommand());
-  register(router, { command: '/profile', title: 'Profile', description: '查看 profile 状态' }, makeProfileCommand());
-  register(router, { command: '/papers', title: 'Papers', description: '查看最近论文产物' }, makePapersCommand());
 }
 
 function register(router: CommandRouter, metadata: CommandMetadata, handler: CommandHandler): void {

@@ -9,6 +9,8 @@ export interface ContextBuilderOpts {
   skillLoader?: SkillsLoader;
   workspace?: string;
   timezone?: string;
+  builtinSkillsDir?: string;
+  builtinSkillsDirs?: string[];
   disabledSkills?: string[];
   contextBlocks?: PromptContextBlock[];
 }
@@ -51,6 +53,8 @@ export class ContextBuilder {
     this.contextBlocks = opts.contextBlocks ?? [];
     this.skillLoader = opts.skillLoader ?? new SkillsLoader({
       workspace: this.workspace,
+      builtinSkillsDir: opts.builtinSkillsDir,
+      builtinSkillsDirs: opts.builtinSkillsDirs,
       disabledSkills: opts.disabledSkills,
     });
   }

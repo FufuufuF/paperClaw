@@ -25,7 +25,7 @@ export interface AgentLoopConfig {
   trace?: TraceBus;
   /** 动态生成 system prompt; 入参留空 — 业务层在闭包里拿到所需依赖 */
   buildPrompt: (ctx?: TurnContext) => Promise<string> | string;
-  /** 传给 slash command 的运行态, 用于 /status /profile /papers. */
+  /** 传给 slash command 的运行态, 用于 /status 和应用层自定义命令. */
   status?: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>;
   /**
    * 可选: 把 inbound.senderId 映射成 sessionId.

@@ -1,11 +1,11 @@
 import { resolve, sep } from 'node:path';
 import {
-  readProfile,
   type LLMClient,
   type Tool,
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
+import { readProfile } from '@paperclaw/profile';
 import { decomposeQuery, decideReplan } from './flows/planner.js';
 import { downloadPdfs, type DownloadResult } from './tools/download.js';
 import { searchArxiv, type ArxivCandidate } from './tools/arxiv.js';
