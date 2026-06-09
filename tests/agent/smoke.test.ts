@@ -28,7 +28,7 @@ interface Harness {
   commands: CommandRouter;
 }
 
-async function makeHarness(dir: string): Promise<Harness> {
+async function makeHarness(dir: string, opts: { contextBudget?: number } = {}): Promise<Harness> {
   const tools = new ToolRegistry();
   for (const t of [echoTool, addTool, multiplyTool, bigTool]) tools.register(t);
   const sessionStore = new FileSessionStore(join(dir, 'sessions'));
@@ -43,7 +43,7 @@ async function makeHarness(dir: string): Promise<Harness> {
       tools,
       llm,
       maxIterations: 10,
-      contextBudget: 4000,
+      contextBudget: opts.contextBudget ?? 4000,
       agentId: 'master',
     },
     channel,
@@ -195,7 +195,7 @@ async function testCommands(): Promise<void> {
 async function testCompaction(): Promise<void> {
   console.log('\n── AC-6: context compaction ──');
   await withTempDir(async (dir) => {
-    const h = await makeHarness(dir);
+    const h = await makeHarness(dir, { contextBudget: 1200 });
     // 5 次 big_tool 调用 → 第 6 轮 LLM 看到的 messages 中, 最早几次 tool turn 应被压成 summary
     h.llm.enqueue(
       ...['t1', 't2', 't3', 't4', 't5'].map((tag) => ({

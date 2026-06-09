@@ -1,12 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  createKnowledgeGraphTools,
   createToolContext,
-  KnowledgeGraphStore,
   ToolRegistry,
-  type KnowledgeIndex,
 } from '../../packages/core/src/index.js';
+import { createKnowledgeGraphTools, KnowledgeGraphStore, type KnowledgeIndex } from '../../packages/knowledge/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 
 async function testStoreInitializesAndQueriesGraph(): Promise<void> {

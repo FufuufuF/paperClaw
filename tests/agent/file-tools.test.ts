@@ -1,12 +1,11 @@
 import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
-  createPaperFileTools,
   createToolContext,
-  KnowledgeGraphStore,
   ToolRegistry,
-  type NoteListing,
 } from '../../packages/core/src/index.js';
+import { KnowledgeGraphStore } from '../../packages/knowledge/src/index.js';
+import { createPaperFileTools, type NoteListing } from '../../packages/reader/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 
 async function makeRegistry(dir: string): Promise<{ registry: ToolRegistry; outputDir: string }> {
