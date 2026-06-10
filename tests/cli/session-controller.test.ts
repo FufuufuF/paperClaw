@@ -1,0 +1,65 @@
+import { join } from 'node:path';
+import { CliSessionController, CLI_SESSION_UID_LENGTH } from '../../packages/cli/src/session-controller.js';
+import { createNewSession, FileSessionStore } from '../../packages/core/src/index.js';
+import { assert, withTempDir } from '../fixtures/index.js';
+
+async function testNamedSessionId(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    const created = await controller.createNextId('Agent Memory');
+
+    assert(/^cli:agent-memory:[A-Za-z0-9]{10}$/.test(created.id), `named id has channel:name:uid shape (${created.id})`);
+    assert(created.sessionName === 'Agent Memory', 'keeps original display name');
+    assert(created.uid.length === CLI_SESSION_UID_LENGTH, 'uid has fixed length');
+    assert(created.channel === 'cli', 'records channel');
+  });
+}
+
+async function testUnnamedSessionId(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    const created = await controller.createNextId();
+
+    assert(/^cli:[A-Za-z0-9]{10}$/.test(created.id), `unnamed id has channel:uid shape (${created.id})`);
+    assert(created.sessionName === undefined, 'unnamed session has no display name');
+    assert(created.uid.length === CLI_SESSION_UID_LENGTH, 'uid has fixed length');
+  });
+}
+
+async function testSwitchState(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    assert(controller.current() === 'cli:default', 'default active session is cli:default');
+    controller.switchTo('cli:abc123');
+    assert(controller.current() === 'cli:abc123', 'switchTo updates active session');
+  });
+}
+
+async function testAvoidExistingIdCollision(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    const first = await controller.createNextId('topic');
+    await store.save(createNewSession(first.id, {
+      sessionName: first.sessionName,
+      uid: first.uid,
+      channel: first.channel,
+    }));
+
+    const second = await controller.createNextId('topic');
+    assert(second.id !== first.id, 'createNextId avoids existing session ids');
+  });
+}
+
+async function main(): Promise<void> {
+  await testNamedSessionId();
+  await testUnnamedSessionId();
+  await testSwitchState();
+  await testAvoidExistingIdCollision();
+  console.log('✓ cli session controller tests passed.');
+}
+
+void main();

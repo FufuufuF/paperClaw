@@ -4,7 +4,7 @@ export function renderPlainWelcome(status?: CommandRuntimeStatus): string {
   const lines = ['paperClaw CLI'];
   if (status) {
     lines.push(
-      `模型: ${status.model ?? 'unknown'}        profile: ${status.profile?.personalization ?? 'unknown'}        session: cli:default`,
+      `模型: ${status.model ?? 'unknown'}        profile: ${status.profile?.personalization ?? 'unknown'}        session: ${status.session?.id ?? 'unknown'}`,
     );
   }
   lines.push('', '/help 查看命令          /status 查看状态          /quit 退出', '');

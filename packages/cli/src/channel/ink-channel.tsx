@@ -5,9 +5,12 @@ import type {
   InboundHandler,
   InboundMessage,
   OutboundMessage,
+  Session,
+  Turn,
 } from '@paperclaw/core';
 import { InkCliApp } from '../ui/ink/App.js';
 import { InkCliStore } from '../ui/ink/store.js';
+import { createSwitchPickerItems } from '../ui/ink/switch-picker.js';
 import { extractToolNames } from '../ui/plain/render.js';
 import type { CLIChannelOpts, CliMessageRole } from './types.js';
 
@@ -22,10 +25,16 @@ export class InkCLIChannel implements Channel {
   private msgCounter = 0;
   private readonly senderId: string;
   private readonly getStatus?: CLIChannelOpts['getStatus'];
+  private readonly listSessions?: CLIChannelOpts['listSessions'];
+  private readonly loadSession?: CLIChannelOpts['loadSession'];
+  private readonly getActiveSessionId?: CLIChannelOpts['getActiveSessionId'];
 
   constructor(opts: CLIChannelOpts = {}) {
     this.senderId = opts.senderId ?? 'cli:default';
     this.getStatus = opts.getStatus;
+    this.listSessions = opts.listSessions;
+    this.loadSession = opts.loadSession;
+    this.getActiveSessionId = opts.getActiveSessionId;
   }
 
   onMessage(handler: InboundHandler): void {
@@ -66,6 +75,9 @@ export class InkCLIChannel implements Channel {
         store={this.store}
         onSubmit={(text) => void this.submit(text)}
         onExit={() => void this.requestExit()}
+        onSwitchMove={(delta) => this.store.moveSwitchPicker(delta)}
+        onSwitchConfirm={() => void this.confirmSwitchPicker()}
+        onSwitchCancel={() => this.cancelSwitchPicker()}
       />,
       {
         stdin,
@@ -97,6 +109,10 @@ export class InkCLIChannel implements Channel {
       await this.requestExit();
       return;
     }
+    if (trimmed === '/switch' && this.listSessions) {
+      await this.openSwitchPicker();
+      return;
+    }
 
     const inbound: InboundMessage = {
       id: `cli-${++this.msgCounter}`,
@@ -114,6 +130,50 @@ export class InkCLIChannel implements Channel {
     this.queue.push(inbound);
     this.store.setQueuedCount(this.processing ? this.queue.length : Math.max(0, this.queue.length - 1));
     void this.processQueue();
+  }
+
+  private async openSwitchPicker(): Promise<void> {
+    try {
+      const sessions = await this.listSessions?.() ?? [];
+      if (sessions.length === 0) {
+        this.store.appendMessage({
+          id: `switch-empty-${Date.now()}`,
+          role: 'system',
+          text: '暂无可切换 session.',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      const activeSessionId = this.getActiveSessionId?.() ?? (await this.getStatus?.())?.session?.id ?? this.senderId;
+      this.store.openSwitchPicker(createSwitchPickerItems(sessions, activeSessionId));
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      this.store.appendMessage({
+        id: `switch-error-${Date.now()}`,
+        role: 'error',
+        text: `读取 session 列表失败: ${text}`,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  private async confirmSwitchPicker(): Promise<void> {
+    const picker = this.store.getSnapshot().switchPicker;
+    const selected = picker?.items[picker.selectedIndex];
+    this.store.closeSwitchPicker();
+    if (!selected) return;
+    await this.submit(`/switch ${selected.index}`);
+    await this.restoreVisibleSessionHistory(selected.id);
+  }
+
+  private cancelSwitchPicker(): void {
+    this.store.closeSwitchPicker();
+    this.store.appendMessage({
+      id: `switch-cancel-${Date.now()}`,
+      role: 'system',
+      text: '已取消 session 切换.',
+      timestamp: Date.now(),
+    });
   }
 
   private async processQueue(): Promise<void> {
@@ -174,6 +234,29 @@ export class InkCLIChannel implements Channel {
       // 状态栏是辅助信息, 失败不影响 CLI 主流程.
     }
   }
+
+  private async restoreVisibleSessionHistory(sessionId: string): Promise<void> {
+    if (!this.loadSession) return;
+    const session = await this.loadSession(sessionId);
+    if (!session) return;
+    this.store.replaceMessages([
+      {
+        id: `restore-${Date.now()}`,
+        role: 'system',
+        text: `已恢复 session: ${displaySessionName(session)}`,
+        timestamp: Date.now(),
+      },
+      ...session.turns
+        .filter(isVisibleTurn)
+        .slice(-40)
+        .map((turn, idx) => ({
+          id: `restore-${session.id}-${turn.timestamp}-${idx}`,
+          role: turn.role === 'user' ? 'user' as const : 'assistant' as const,
+          text: turn.content,
+          timestamp: turn.timestamp,
+        })),
+    ]);
+  }
 }
 
 function roleFor(kind: NonNullable<OutboundMessage['kind']>): CliMessageRole {
@@ -186,4 +269,16 @@ function roleFor(kind: NonNullable<OutboundMessage['kind']>): CliMessageRole {
 function toolHintText(msg: OutboundMessage): string {
   const tools = extractToolNames(msg);
   return tools.length > 0 ? tools.join(', ') : msg.text;
+}
+
+function isVisibleTurn(turn: Turn): boolean {
+  return (
+    (turn.role === 'user' || turn.role === 'assistant') &&
+    !turn.command &&
+    !turn.content.trim().startsWith('/')
+  );
+}
+
+function displaySessionName(session: Session): string {
+  return session.metadata.sessionName || session.id;
 }

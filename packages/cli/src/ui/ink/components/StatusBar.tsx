@@ -10,6 +10,7 @@ export function StatusBar(props: {
   const provider = props.status?.provider ?? 'unknown';
   const model = props.status?.model ?? 'unknown';
   const profile = props.status?.profile?.personalization ?? 'unknown';
+  const session = props.status?.session?.id ?? 'unknown';
   const stateLabel = props.runState === 'working'
     ? '处理中'
     : props.runState === 'error'
@@ -33,6 +34,9 @@ export function StatusBar(props: {
         </Text>
         <Text>
           profile: <Text color="magenta">{profile}</Text>
+        </Text>
+        <Text>
+          session: <Text color="blue">{session}</Text>
         </Text>
         <Text>
           状态: <Text color={stateColor}>{stateLabel}</Text>

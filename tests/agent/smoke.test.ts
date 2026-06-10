@@ -28,12 +28,23 @@ interface Harness {
   commands: CommandRouter;
 }
 
-async function makeHarness(dir: string, opts: { contextBudget?: number } = {}): Promise<Harness> {
+async function makeHarness(dir: string, opts: {
+  contextBudget?: number;
+  session?: {
+    current: () => string;
+    switchTo: (id: string) => void;
+    createSessionId: (name?: string) => { id: string; sessionName?: string; uid?: string; channel?: string };
+  };
+} = {}): Promise<Harness> {
   const tools = new ToolRegistry();
   for (const t of [echoTool, addTool, multiplyTool, bigTool]) tools.register(t);
   const sessionStore = new FileSessionStore(join(dir, 'sessions'));
   const commands = new CommandRouter();
-  registerBuiltinCommands(commands, { tools, sessionStore });
+  registerBuiltinCommands(commands, {
+    tools,
+    sessionStore,
+    getActiveSessionId: opts.session?.current,
+  });
   const channel = new MockChannel();
   const llm = new MockLLM();
   const loop = new AgentLoop({
@@ -48,7 +59,9 @@ async function makeHarness(dir: string, opts: { contextBudget?: number } = {}): 
     },
     channel,
     buildPrompt: () => buildBasePrompt(tools),
-    sessionIdFor: () => 'cli:default',
+    sessionIdFor: opts.session?.current ?? (() => 'cli:default'),
+    switchSession: opts.session?.switchTo,
+    createSessionId: opts.session?.createSessionId,
   });
   channel.onMessage((m) => loop.processMessage(m));
   return { loop, channel, llm, tools, sessionStore, commands };
@@ -188,6 +201,66 @@ async function testCommands(): Promise<void> {
     // /clear 之后 session.turns 应该只有 /clear 自己 (user 输入 /clear + bot "已清空")
     assert(session!.turns.length === 2, `/clear 后留 2 turn (got ${session!.turns.length})`);
     assert(session!.metadata.totalUsage.input === 0, '/clear 后 usage 归零');
+  });
+}
+
+async function testNewSessionAndSwitchCommand(): Promise<void> {
+  console.log('\n── AC-5b: /new + /switch session routing ──');
+  await withTempDir(async (dir) => {
+    let activeSessionId = 'cli:default';
+    const nextSessionId = 'cli:agent-memory:ABCDEFGHIJ';
+    const h = await makeHarness(dir, {
+      session: {
+        current: () => activeSessionId,
+        switchTo: (id) => {
+          activeSessionId = id;
+        },
+        createSessionId: (name) => ({
+          id: nextSessionId,
+          sessionName: name,
+          uid: 'ABCDEFGHIJ',
+          channel: 'cli',
+        }),
+      },
+    });
+
+    h.llm.enqueue({ text: 'old topic reply', usage: { input: 10, output: 3 } });
+    await h.channel.simulate('old topic');
+    assert(activeSessionId === 'cli:default', 'initial chat uses default session');
+
+    await h.channel.simulate('/new agent memory');
+    assert(activeSessionId === nextSessionId, '/new switches active session');
+
+    const oldAfterNew = await h.sessionStore.load('cli:default');
+    const newAfterNew = await h.sessionStore.load(nextSessionId);
+    assert(oldAfterNew !== null, 'old session file remains after /new');
+    assert(newAfterNew !== null, 'new session file is created by /new');
+    assert(newAfterNew!.turns.length === 0, 'new session starts empty');
+    assert(newAfterNew!.metadata.sessionName === 'agent memory', 'new session stores display name');
+    assert(newAfterNew!.metadata.uid === 'ABCDEFGHIJ', 'new session stores uid');
+    assert(newAfterNew!.metadata.channel === 'cli', 'new session stores channel');
+    assert(oldAfterNew!.turns.some((turn) => turn.command === '/new'), '/new command transcript stays in old session');
+
+    h.llm.enqueue({ text: 'new topic reply', usage: { input: 10, output: 3 } });
+    await h.channel.simulate('new topic');
+    const oldAfterNewChat = await h.sessionStore.load('cli:default');
+    const newAfterChat = await h.sessionStore.load(nextSessionId);
+    assert(!oldAfterNewChat!.turns.some((turn) => turn.content === 'new topic'), 'post-/new chat is not written to old session');
+    assert(newAfterChat!.turns.some((turn) => turn.content === 'new topic'), 'post-/new chat is written to new session');
+
+    await h.channel.simulate('/switch');
+    const listText = h.channel.lastText();
+    assert(listText.includes('可切换 sessions:'), '/switch lists sessions');
+    assert(listText.includes('agent memory ABCDEFGHIJ'), '/switch shows session name and uid');
+    assert(listText.includes('old topic reply'), '/switch preview skips command turns and shows last useful message');
+
+    await h.channel.simulate('/switch 2');
+    assert(activeSessionId === 'cli:default', '/switch <number> switches without requiring full session id');
+
+    h.llm.enqueue({ text: 'back on default', usage: { input: 10, output: 3 } });
+    await h.channel.simulate('back');
+    const oldAfterSwitchBack = await h.sessionStore.load('cli:default');
+    assert(oldAfterSwitchBack!.turns.some((turn) => turn.content === 'back'), 'after /switch, later chat writes to selected session');
   });
 }
 
@@ -343,6 +416,7 @@ async function main() {
   await testMultiStepTool();
   await testPersistence();
   await testCommands();
+  await testNewSessionAndSwitchCommand();
   await testCompaction();
   await testChannelDecoupling();
   await testRuntimeContextAndSessionLock();

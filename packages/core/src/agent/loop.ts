@@ -32,6 +32,20 @@ export interface AgentLoopConfig {
    * 默认 `inbound.senderId`. CLI 通道里通常返回固定 "cli:default".
    */
   sessionIdFor?: (senderId: string) => string;
+  /** Optional app-level factory for commands that create a fresh session id. */
+  createSessionId?: (name?: string) => {
+    id: string;
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  } | Promise<{
+    id: string;
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  }>;
+  /** Optional hook used by session commands such as /new and /switch. */
+  switchSession?: (sessionId: string) => void | Promise<void>;
   /** 是否向 channel 发送 progress/tool_hint envelope. 默认 false 以保持旧测试兼容. */
   sendProgress?: boolean;
 }
@@ -127,19 +141,29 @@ export class AgentLoop {
         llm: this.config.runner.llm,
         status: this.config.status,
         createSession: createNewSession,
+        createSessionId: this.config.createSessionId,
         cancelActiveTask: (id) => this.cancelActiveTask(id),
       });
       if (cmdResult) {
+        const commandName = inbound.text.split(/\s/)[0] ?? inbound.text;
+        userTurn.command = commandName;
         // shortcut: 不走 LLM. 把 user turn + assistant turn 都记下来.
         const assistantTurn: Turn = {
           role: 'assistant',
           content: cmdResult.text,
+          command: commandName,
           tokenEstimate: estimateTokens(cmdResult.text),
           timestamp: Date.now(),
         };
 
         let outSession = session;
-        if (cmdResult.mutatedSession) {
+        if (cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId) {
+          session.turns.push(assistantTurn);
+          session.metadata.lastActiveAt = new Date().toISOString();
+          await manager.save(session);
+          await manager.save(cmdResult.mutatedSession);
+          outSession = cmdResult.mutatedSession;
+        } else if (cmdResult.mutatedSession) {
           // /clear 这类命令返回新 session — 用它替换当前的. 但 userTurn
           // 之前已经 push 进旧 session 了, 新 session 里没有 — 我们把它
           // 补进去, 让 transcript 仍然显示 "user 输入了 /clear".
@@ -151,14 +175,19 @@ export class AgentLoop {
         outSession.metadata.lastActiveAt = new Date().toISOString();
 
         ctx.session = outSession;
-        ctx.commandName = inbound.text.split(/\s/)[0];
-        await manager.save(outSession);
+        ctx.commandName = commandName;
+        if (!(cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId)) {
+          await manager.save(outSession);
+        }
+        if (cmdResult.switchSessionId) {
+          await this.config.switchSession?.(cmdResult.switchSessionId);
+        }
         await this.send({ kind: 'final', text: cmdResult.text, replyTo: inbound.id, metadata: cmdResult.metadata });
 
         await this.config.trace?.emit('loop', 'phase_end', {
           phase_name: 'COMMAND',
           session_id: sessionId,
-          command: inbound.text.split(/\s/)[0],
+          command: commandName,
         });
         return;
       }

@@ -13,6 +13,7 @@
     "@paperclaw/reader": "workspace:*",
     "@paperclaw/search": "workspace:*",
     "ink": "^7.0.5",
+    "nanoid": "^5.0.9",
     "react": "^19.2.7"
   },
   "devDependencies": {

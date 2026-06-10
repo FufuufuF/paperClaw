@@ -133,6 +133,7 @@ export type {
   Turn,
   TurnRole,
   Session,
+  SessionMetadata,
   SessionStore,
   SessionListing,
 } from './session/manager.js';
@@ -157,6 +158,7 @@ export {
   makeClearCommand,
   makeHelpCommand,
   makeHistoryCommand,
+  makeSwitchCommand,
   makeCostCommand,
   makeSessionCommand,
   makeNewCommand,
