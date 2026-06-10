@@ -9,6 +9,8 @@ export type TurnRole = 'user' | 'assistant' | 'tool';
 export interface Turn {
   role: TurnRole;
   content: string;
+  /** slash command name when this turn is part of a command transcript */
+  command?: string;
   /** assistant turn 发起的 tool calls */
   toolCalls?: ToolCall[];
   /** tool turn 对应哪个 call */
@@ -23,14 +25,22 @@ export interface Session {
   /** 例: "cli:default" / "feishu:user_abc" */
   id: string;
   turns: Turn[];
-  metadata: {
-    /** ISO */
-    createdAt: string;
-    /** ISO */
-    lastActiveAt: string;
-    totalUsage: { input: number; output: number };
-    runtimeCheckpoint?: AgentCheckpoint;
-  };
+  metadata: SessionMetadata;
+}
+
+export interface SessionMetadata {
+  /** ISO */
+  createdAt: string;
+  /** ISO */
+  lastActiveAt: string;
+  totalUsage: { input: number; output: number };
+  runtimeCheckpoint?: AgentCheckpoint;
+  /** display name provided by the user, e.g. `/new agent memory` */
+  sessionName?: string;
+  /** stable short random id generated at session creation */
+  uid?: string;
+  /** channel namespace, e.g. `cli` or `feishu` */
+  channel?: string;
 }
 
 export interface SessionListing {
@@ -38,6 +48,9 @@ export interface SessionListing {
   lastActiveAt: string;
   turnCount: number;
   preview?: string;
+  sessionName?: string;
+  uid?: string;
+  channel?: string;
 }
 
 export interface SessionStore {
@@ -121,6 +134,9 @@ export class FileSessionStore implements SessionStore {
           lastActiveAt: s.metadata?.lastActiveAt ?? '',
           turnCount: s.turns?.length ?? 0,
           preview: previewSession(s),
+          sessionName: s.metadata.sessionName,
+          uid: s.metadata.uid,
+          channel: s.metadata.channel,
         });
       } catch {
         // 损坏文件忽略, 不让 list 整体挂掉
@@ -225,7 +241,10 @@ export class SessionManager {
 }
 
 /** 工厂方法: 创建一个空 session */
-export function createNewSession(id: string): Session {
+export function createNewSession(
+  id: string,
+  identity: Pick<SessionMetadata, 'sessionName' | 'uid' | 'channel'> = {},
+): Session {
   const now = new Date().toISOString();
   return {
     id,
@@ -234,6 +253,7 @@ export function createNewSession(id: string): Session {
       createdAt: now,
       lastActiveAt: now,
       totalUsage: { input: 0, output: 0 },
+      ...definedIdentity(identity),
     },
   };
 }
@@ -280,6 +300,10 @@ function normalizeSession(value: unknown, fallbackId: string): Session {
         input: raw.metadata?.totalUsage?.input ?? 0,
         output: raw.metadata?.totalUsage?.output ?? 0,
       },
+      runtimeCheckpoint: raw.metadata?.runtimeCheckpoint,
+      sessionName: typeof raw.metadata?.sessionName === 'string' ? raw.metadata.sessionName : undefined,
+      uid: typeof raw.metadata?.uid === 'string' ? raw.metadata.uid : undefined,
+      channel: typeof raw.metadata?.channel === 'string' ? raw.metadata.channel : undefined,
     },
   };
 }
@@ -294,9 +318,22 @@ function isTurn(value: unknown): value is Turn {
 }
 
 function previewSession(session: Session): string {
-  const last = [...session.turns].reverse().find((turn) => turn.role === 'user' || turn.role === 'assistant');
+  const last = [...session.turns]
+    .reverse()
+    .find((turn) =>
+      (turn.role === 'user' || turn.role === 'assistant') &&
+      !turn.command &&
+      !turn.content.trim().startsWith('/')
+    )
+    ?? [...session.turns].reverse().find((turn) => turn.role === 'user' || turn.role === 'assistant');
   if (!last) return '';
   return last.content.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function definedIdentity(identity: Pick<SessionMetadata, 'sessionName' | 'uid' | 'channel'>): Partial<SessionMetadata> {
+  return Object.fromEntries(
+    Object.entries(identity).filter(([, value]) => typeof value === 'string' && value.length > 0),
+  ) as Partial<SessionMetadata>;
 }
 
 function cloneSession(session: Session): Session {

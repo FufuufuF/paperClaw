@@ -1,5 +1,5 @@
-import { KnowledgeGraphStore } from '../../knowledge/graph-store.js';
-import type { LLMClient } from '../../providers/base.js';
+import type { LLMClient, Tool, ToolContext, ToolResult } from '@paperclaw/core';
+import { KnowledgeGraphStore } from './graph-store.js';
 import type {
   KnowledgeCreatedBy,
   KnowledgeEvidencePointer,
@@ -8,9 +8,7 @@ import type {
   KnowledgePaperStatus,
   KnowledgePaperVerdict,
   PendingLinkStatus,
-} from '../../knowledge/types.js';
-import type { ToolContext } from './context.js';
-import type { Tool, ToolResult } from './types.js';
+} from './types.js';
 
 export interface KnowledgeGraphToolsOpts {
   llm?: LLMClient;
@@ -19,6 +17,7 @@ export interface KnowledgeGraphToolsOpts {
 export function createKnowledgeGraphTools(opts: KnowledgeGraphToolsOpts = {}): Tool[] {
   return [
     kgGetNodeTool,
+    kgRecentNodesTool,
     kgNeighborsTool,
     kgGetLinkTool,
     kgSearchNodesTool,
@@ -105,7 +104,7 @@ const kgGetLinkTool: Tool = {
 
 const kgSearchNodesTool: Tool = {
   name: 'kg_search_nodes',
-  description: 'Search knowledge graph paper nodes by id/title/status/verdict. Returns limited navigation metadata only.',
+  description: 'Search knowledge graph paper nodes by id/title/summary/status/verdict. Returns limited navigation metadata only.',
   readOnly: true,
   concurrencySafe: true,
   scopes: ['paper-read'],
@@ -127,6 +126,31 @@ const kgSearchNodesTool: Tool = {
       limit: numberArg(args.limit),
     });
     return ok(result, `KG node search returned ${result.results.length}/${result.total}`);
+  },
+};
+
+const kgRecentNodesTool: Tool = {
+  name: 'kg_recent_nodes',
+  description: 'List recently updated knowledge graph paper nodes, usually filtered by status=read for recommendation seeding.',
+  readOnly: true,
+  concurrencySafe: true,
+  scopes: ['paper-read'],
+  parameters: {
+    type: 'object',
+    properties: {
+      status: { type: 'array', items: { type: 'string', enum: ['unread', 'reading', 'read', 'skipped'] } },
+      verdict: { type: 'array', items: { type: 'string', enum: ['adopt', 'maybe', 'skip', 'unknown'] } },
+      limit: { type: 'integer', minimum: 1, maximum: 50 },
+    },
+  },
+  async execute(args, ctx) {
+    const store = storeFromContext(ctx);
+    const result = await store.recentNodes({
+      status: stringArray(args.status) as KnowledgePaperStatus[] | undefined,
+      verdict: stringArray(args.verdict) as KnowledgePaperVerdict[] | undefined,
+      limit: numberArg(args.limit),
+    });
+    return ok(result, `KG recent nodes returned ${result.results.length}/${result.total}`);
   },
 };
 
@@ -247,6 +271,7 @@ const kgUpsertNodeTool: Tool = {
     properties: {
       id: { type: 'string' },
       title: { type: 'string' },
+      summary_short: { type: 'string' },
       note_path: { type: 'string' },
       arxiv_id: { type: 'string' },
       status: { type: 'string', enum: ['unread', 'reading', 'read', 'skipped'] },
@@ -259,6 +284,7 @@ const kgUpsertNodeTool: Tool = {
     const result = await store.upsertNode({
       id: stringArg(args.id),
       title: optionalString(args.title),
+      summary_short: optionalString(args.summary_short),
       note_path: optionalString(args.note_path),
       arxiv_id: optionalString(args.arxiv_id),
       status: enumArg(args.status, ['unread', 'reading', 'read', 'skipped']),

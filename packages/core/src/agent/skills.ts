@@ -28,6 +28,7 @@ export interface SkillEntry {
 export interface SkillsLoaderOpts {
   workspace?: string;
   builtinSkillsDir?: string;
+  builtinSkillsDirs?: string[];
   disabledSkills?: Iterable<string>;
 }
 
@@ -40,6 +41,7 @@ export class SkillsLoader {
   readonly workspace?: string;
   readonly workspaceSkillsDir?: string;
   readonly builtinSkillsDir: string;
+  readonly builtinSkillsDirs: string[];
   readonly disabledSkills: Set<string>;
 
   constructor(opts: SkillsLoaderOpts | string = {}) {
@@ -47,12 +49,15 @@ export class SkillsLoader {
       this.workspace = undefined;
       this.workspaceSkillsDir = undefined;
       this.builtinSkillsDir = opts;
+      this.builtinSkillsDirs = [opts];
       this.disabledSkills = new Set();
       return;
     }
     this.workspace = opts.workspace;
     this.workspaceSkillsDir = opts.workspace ? join(opts.workspace, 'skills') : undefined;
-    this.builtinSkillsDir = opts.builtinSkillsDir ?? BUILTIN_SKILLS_DIR;
+    this.builtinSkillsDirs = opts.builtinSkillsDirs
+      ?? (opts.builtinSkillsDir ? [opts.builtinSkillsDir] : [BUILTIN_SKILLS_DIR]);
+    this.builtinSkillsDir = this.builtinSkillsDirs[0] ?? BUILTIN_SKILLS_DIR;
     this.disabledSkills = new Set(opts.disabledSkills ?? []);
   }
 
@@ -64,7 +69,12 @@ export class SkillsLoader {
     }
 
     const workspaceNames = new Set(out.map((entry) => entry.name));
-    out.push(...this.skillEntriesFromDir(this.builtinSkillsDir, 'builtin', workspaceNames));
+    const seenNames = new Set(workspaceNames);
+    for (const dir of this.builtinSkillsDirs) {
+      const entries = this.skillEntriesFromDir(dir, 'builtin', seenNames);
+      out.push(...entries);
+      for (const entry of entries) seenNames.add(entry.name);
+    }
 
     const filtered = out.filter((entry) => !this.disabledSkills.has(entry.name));
     const available = filterUnavailable
@@ -143,7 +153,7 @@ export class SkillsLoader {
   private skillRoots(): string[] {
     return [
       ...(this.workspaceSkillsDir ? [this.workspaceSkillsDir] : []),
-      this.builtinSkillsDir,
+      ...this.builtinSkillsDirs,
     ];
   }
 }

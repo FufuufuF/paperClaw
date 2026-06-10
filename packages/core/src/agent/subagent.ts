@@ -31,7 +31,7 @@ export interface SubagentResult {
 
 /**
  * 轻量同步 sub-agent runner. 它不接收 Session, 也不返回 Turn 给主循环持久化;
- * 调用方只能拿到最终摘要/产物路径, 从机制上避免 PDF 全文进入主 session.
+ * 调用方只能拿到最终摘要/产物路径, 从机制上避免大块中间上下文进入主 session.
  */
 export async function runSubagent(spec: SubagentSpec): Promise<SubagentResult> {
   const runner = new AgentRunner(spec.llm);

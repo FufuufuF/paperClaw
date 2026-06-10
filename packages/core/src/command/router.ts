@@ -13,6 +13,12 @@ export interface CommandRuntimeStatus {
   provider?: string;
   model?: string;
   activeTask?: boolean;
+  session?: {
+    id: string;
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  };
   profile?: {
     path: string;
     readCount: number;
@@ -29,7 +35,22 @@ export interface CommandContext {
   tools?: ToolRegistry;
   llm?: LLMClient;
   status?: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>;
-  createSession?: (id: string) => Session;
+  createSession?: (id: string, identity?: {
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  }) => Session;
+  createSessionId?: (name?: string) => {
+    id: string;
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  } | Promise<{
+    id: string;
+    sessionName?: string;
+    uid?: string;
+    channel?: string;
+  }>;
   cancelActiveTask?: (sessionId: string) => boolean;
 }
 
@@ -40,6 +61,8 @@ export interface CommandResult {
    * AgentLoop 会用它替换内存中的 session 并持久化.
    */
   mutatedSession?: Session;
+  /** 若命令要求切换后续消息到另一个 session, 返回目标 session id. */
+  switchSessionId?: string;
   metadata?: Record<string, unknown>;
 }
 

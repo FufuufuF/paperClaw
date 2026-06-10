@@ -11,7 +11,8 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { readProfile, TraceBus } from '@paperclaw/core';
+import { TraceBus } from '@paperclaw/core';
+import { readProfile } from '@paperclaw/profile';
 
 const SAMPLE_PROFILE = `# User Reading Profile
 

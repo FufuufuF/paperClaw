@@ -1,3 +1,7 @@
+import { fileURLToPath } from 'node:url';
+
+export const KNOWLEDGE_SKILLS_DIR = fileURLToPath(new URL('./skills', import.meta.url));
+
 export * from './types.js';
 export {
   KnowledgeGraphStore,
@@ -13,3 +17,7 @@ export {
   type UpsertLinkInput,
   type UpsertNodeInput,
 } from './graph-store.js';
+export {
+  createKnowledgeGraphTools,
+  type KnowledgeGraphToolsOpts,
+} from './knowledge-tools.js';

@@ -8,7 +8,7 @@ import type { JsonSchema } from './schema.js';
 
 export type { ToolDef };
 
-export type ToolScope = 'core' | 'subagent' | 'paper-search' | 'paper-read' | string;
+export type ToolScope = 'core' | 'subagent' | string;
 
 export interface ToolResult {
   success: boolean;
@@ -36,7 +36,7 @@ export interface Tool {
   /**
    * Side-effecting tools can require an explicit user intent in the current
    * turn. AgentRunner enforces this before executing the tool, so prompt drift
-   * cannot silently download PDFs or edit notes.
+   * cannot silently perform writes or other side effects.
    */
   confirmation?: {
     required: boolean;

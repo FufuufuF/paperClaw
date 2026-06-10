@@ -1,5 +1,9 @@
 import type { ToolRegistry } from '../agent/tools/registry.js';
-import { createNewSession, type SessionStore } from '../session/manager.js';
+import {
+  createNewSession,
+  type SessionListing,
+  type SessionStore,
+} from '../session/manager.js';
 import {
   CommandRouter,
   type CommandHandler,
@@ -44,16 +48,56 @@ export function makeHelpCommand(opts: {
   };
 }
 
-/** /history — 列出所有 session */
-export function makeHistoryCommand(opts: { sessionStore: SessionStore }): CommandHandler {
-  return async () => {
+/** /switch — 展示历史 session, 或用序号切换 session */
+export function makeSwitchCommand(opts: {
+  sessionStore: SessionStore;
+  getActiveSessionId?: () => string;
+}): CommandHandler {
+  return async (ctx) => {
     const list = await opts.sessionStore.list();
-    if (list.length === 0) return { text: '暂无历史 session.' };
-    const lines = list.map(
-      (s) => `- ${s.id}  (${s.turnCount} turns, last: ${s.lastActiveAt || 'unknown'})`,
-    );
-    return { text: ['历史 sessions:', ...lines].join('\n') };
+    const activeId = opts.getActiveSessionId?.() ?? ctx.session.id;
+    const target = ctx.args.trim();
+    if (!target) {
+      return { text: renderSwitchList(list, activeId) };
+    }
+
+    if (!/^\d+$/.test(target)) {
+      return {
+        text: [
+          `无法识别的 session 序号: ${target}`,
+          '',
+          renderSwitchList(list, activeId),
+        ].join('\n'),
+      };
+    }
+
+    const index = Number(target);
+    const selected = list[index - 1];
+    if (!selected) {
+      return {
+        text: [
+          `session 序号 ${index} 不存在。`,
+          '',
+          renderSwitchList(list, activeId),
+        ].join('\n'),
+      };
+    }
+
+    if (selected.id === activeId) {
+      return { text: `已在当前 session: ${sessionDisplayName(selected)}` };
+    }
+
+    return {
+      text: `已切换到 session: ${sessionDisplayName(selected)}`,
+      switchSessionId: selected.id,
+      metadata: { sessionId: selected.id },
+    };
   };
+}
+
+/** /history — /switch 的兼容别名 */
+export function makeHistoryCommand(opts: { sessionStore: SessionStore }): CommandHandler {
+  return makeSwitchCommand({ sessionStore: opts.sessionStore });
 }
 
 /** /cost — 当前 session 的 token 消耗 */
@@ -75,7 +119,23 @@ export function makeSessionCommand(): CommandHandler {
 
 /** /new — 新开当前会话窗口. 旧 transcript 的归档由外层后续 HistoryArchive 接管. */
 export function makeNewCommand(): CommandHandler {
-  return (ctx) => {
+  return async (ctx) => {
+    const name = ctx.args.trim() || undefined;
+    const next = await ctx.createSessionId?.(name);
+    if (next) {
+      const fresh = (ctx.createSession ?? createNewSession)(next.id, {
+        sessionName: next.sessionName,
+        uid: next.uid,
+        channel: next.channel,
+      });
+      return {
+        text: `已开启新会话: ${next.sessionName ?? next.uid ?? next.id}`,
+        mutatedSession: fresh,
+        switchSessionId: next.id,
+        metadata: { previousTurnCount: ctx.session.turns.length, sessionId: next.id },
+      };
+    }
+
     const fresh = (ctx.createSession ?? createNewSession)(ctx.session.id);
     return {
       text: '已开启新会话.',
@@ -93,7 +153,7 @@ export function makeStatusCommand(opts: { tools: ToolRegistry }): CommandHandler
     const lines = [
       `provider: ${status?.provider ?? providerFromId(ctx.llm?.id) ?? 'unknown'}`,
       `model: ${status?.model ?? modelFromId(ctx.llm?.id) ?? 'unknown'}`,
-      `session: ${ctx.session.id} (${ctx.session.turns.length} turns)`,
+      `session: ${status?.session?.id ?? ctx.session.id} (${ctx.session.turns.length} turns)`,
       `tools: ${opts.tools.names().join(', ') || '(none)'}`,
       `active_task: ${status?.activeTask ? 'yes' : 'no'}`,
     ];
@@ -130,58 +190,25 @@ export function makeStopCommand(): CommandHandler {
   };
 }
 
-/** /profile — 展示论文 profile 的 cold/weak/full 状态. */
-export function makeProfileCommand(): CommandHandler {
-  return async (ctx) => {
-    const status = await ctx.status?.();
-    const profile = status?.profile;
-    if (!profile) return { text: 'profile: not configured' };
-    return {
-      text: [
-        `profile path: ${profile.path}`,
-        `read papers: ${profile.readCount}`,
-        `personalization: ${profile.personalization}`,
-      ].join('\n'),
-    };
-  };
-}
-
-/** /papers — 展示最近下载/精读的论文产物. */
-export function makePapersCommand(): CommandHandler {
-  return async (ctx) => {
-    const status = await ctx.status?.();
-    const papers = status?.papers ?? [];
-    if (papers.length === 0) return { text: '暂无论文产物.' };
-    return {
-      text: [
-        '最近论文:',
-        ...papers.slice(0, 20).map((paper, idx) =>
-          `${idx + 1}. ${paper.title ?? paper.id}${paper.path ? ` — ${paper.path}` : ''}`,
-        ),
-      ].join('\n'),
-    };
-  };
-}
-
 export function registerBuiltinCommands(
   router: CommandRouter,
   deps: {
     tools: ToolRegistry;
     sessionStore: SessionStore;
     status?: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>;
+    getActiveSessionId?: () => string;
   },
 ): void {
   register(router, { command: '/clear', title: 'Clear', description: '清空当前 session' }, makeClearCommand());
-  register(router, { command: '/new', title: 'New Session', description: '开启新会话' }, makeNewCommand());
+  register(router, { command: '/new', title: 'New Session', description: '开启新会话', argHint: '[name]' }, makeNewCommand());
   register(router, { command: '/help', title: 'Help', description: '查看命令和工具' }, makeHelpCommand({ router, tools: deps.tools }));
-  register(router, { command: '/history', title: 'History', description: '列出历史 session' }, makeHistoryCommand({ sessionStore: deps.sessionStore }));
+  register(router, { command: '/switch', title: 'Switch Session', description: '查看并切换历史 session', argHint: '[number]' }, makeSwitchCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));
+  register(router, { command: '/history', title: 'History', description: '查看历史 session (/switch 的别名)' }, makeHistoryCommand({ sessionStore: deps.sessionStore }));
   register(router, { command: '/cost', title: 'Cost', description: '查看当前 session token 消耗' }, makeCostCommand());
   register(router, { command: '/session', title: 'Session', description: '查看当前 session' }, makeSessionCommand());
   register(router, { command: '/status', title: 'Status', description: '查看 provider/model/session/profile/tools 状态' }, makeStatusCommand({ tools: deps.tools }));
   register(router, { command: '/model', title: 'Model', description: '查看当前模型', argHint: '[preset]' }, makeModelCommand());
   register(router, { command: '/stop', title: 'Stop', description: '请求停止当前任务' }, makeStopCommand());
-  register(router, { command: '/profile', title: 'Profile', description: '查看 profile 状态' }, makeProfileCommand());
-  register(router, { command: '/papers', title: 'Papers', description: '查看最近论文产物' }, makePapersCommand());
 }
 
 function register(router: CommandRouter, metadata: CommandMetadata, handler: CommandHandler): void {
@@ -195,4 +222,38 @@ function providerFromId(id?: string): string | undefined {
 function modelFromId(id?: string): string | undefined {
   const parts = id?.split('/');
   return parts && parts.length > 1 ? parts.slice(1).join('/') : undefined;
+}
+
+function renderSwitchList(list: SessionListing[], activeId: string): string {
+  if (list.length === 0) return '暂无可切换 session。';
+  const lines = ['可切换 sessions:'];
+  list.forEach((session, idx) => {
+    const marker = session.id === activeId ? '*' : ' ';
+    const preview = session.preview?.trim() || '(暂无消息)';
+    lines.push(`${marker} ${idx + 1}. ${sessionDisplayName(session)}  ${session.turnCount} turns  last: ${session.lastActiveAt || 'unknown'}`);
+    lines.push(`     ${preview}`);
+  });
+  lines.push('', '输入 /switch <number> 切换到对应会话。');
+  return lines.join('\n');
+}
+
+function sessionDisplayName(session: SessionListing): string {
+  const parsed = parseSessionId(session.id);
+  const name = session.sessionName?.trim()
+    || parsed.sessionName
+    || (session.id === 'cli:default' ? '默认会话' : '未命名');
+  const uid = session.uid ?? parsed.uid;
+  return uid ? `${name} ${uid}` : name;
+}
+
+function parseSessionId(id: string): { channel?: string; sessionName?: string; uid?: string } {
+  const parts = id.split(':').filter(Boolean);
+  if (parts.length === 0) return {};
+  if (parts.length === 1) return { uid: parts[0] };
+  if (parts.length === 2) return { channel: parts[0], uid: parts[1] };
+  return {
+    channel: parts[0],
+    sessionName: parts.slice(1, -1).join(':'),
+    uid: parts.at(-1),
+  };
 }

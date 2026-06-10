@@ -1,5 +1,11 @@
 import type { CommandRuntimeStatus } from '@paperclaw/core';
-import type { CliMessage, CliRunState, CliViewState } from '../../channel/types.js';
+import type {
+  CliMessage,
+  CliRunState,
+  CliSwitchPickerItem,
+  CliViewState,
+} from '../../channel/types.js';
+import { moveSwitchSelection } from './switch-picker.js';
 
 export class InkCliStore {
   private state: CliViewState = {
@@ -24,6 +30,10 @@ export class InkCliStore {
     });
   }
 
+  replaceMessages(messages: CliMessage[]): void {
+    this.setState({ messages: messages.slice(-80) });
+  }
+
   setRuntimeStatus(runtimeStatus: CommandRuntimeStatus): void {
     this.setState({ runtimeStatus });
   }
@@ -38,6 +48,25 @@ export class InkCliStore {
 
   setQueuedCount(queuedCount: number): void {
     this.setState({ queuedCount });
+  }
+
+  openSwitchPicker(items: CliSwitchPickerItem[]): void {
+    this.setState({ switchPicker: { items, selectedIndex: 0 } });
+  }
+
+  moveSwitchPicker(delta: number): void {
+    const picker = this.state.switchPicker;
+    if (!picker) return;
+    this.setState({
+      switchPicker: {
+        ...picker,
+        selectedIndex: moveSwitchSelection(picker.selectedIndex, delta, picker.items.length),
+      },
+    });
+  }
+
+  closeSwitchPicker(): void {
+    this.setState({ switchPicker: undefined });
   }
 
   private setState(patch: Partial<CliViewState>): void {

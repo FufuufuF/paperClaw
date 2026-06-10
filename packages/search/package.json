@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@paperclaw/core": "workspace:*",
+    "@paperclaw/profile": "workspace:*",
     "fast-xml-parser": "^4.5.0"
   },
   "devDependencies": {

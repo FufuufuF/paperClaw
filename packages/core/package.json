@@ -8,8 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./providers": "./src/providers/index.ts",
-    "./trace": "./src/trace.ts",
-    "./memory": "./src/agent/memory.ts"
+    "./trace": "./src/trace.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

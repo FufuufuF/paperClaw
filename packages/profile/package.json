@@ -1,5 +1,5 @@
 {
-  "name": "@paperclaw/reader",
+  "name": "@paperclaw/profile",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,13 +11,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@paperclaw/core": "workspace:*",
-    "@paperclaw/knowledge": "workspace:*"
-  },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
 }

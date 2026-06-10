@@ -33,6 +33,15 @@ const candidates: ArxivCandidate[] = [
     pdf_url: 'https://arxiv.org/pdf/2401.00002.pdf',
     published: '2024-01-02T00:00:00Z',
   },
+  {
+    arxiv_id: '2401.00003',
+    title: 'Already In Knowledge Graph',
+    authors: ['C. Researcher'],
+    year: 2024,
+    abstract: 'A tool-use agent paper that is already represented in the knowledge graph.',
+    pdf_url: 'https://arxiv.org/pdf/2401.00003.pdf',
+    published: '2024-01-03T00:00:00Z',
+  },
 ];
 
 async function testPaperSearchAndDownloadHandoff(): Promise<void> {
@@ -82,6 +91,7 @@ async function testPaperSearchAndDownloadHandoff(): Promise<void> {
       query: 'agent harness',
       mode: 'fast',
       maxResults: 5,
+      excludeArxivIds: ['2401.00003'],
     });
     assert(search.success === true, 'paper_search succeeds');
     const searchData = search.data as { shortlist: ShortlistItem[]; trace: { terms: string[]; triageCounts: Record<string, number> } };

@@ -3,6 +3,11 @@ import {
   renderPlainMessage,
   renderPlainWelcome,
 } from '../../packages/cli/src/ui/plain/render.js';
+import {
+  createSwitchPickerItems,
+  moveSwitchSelection,
+} from '../../packages/cli/src/ui/ink/switch-picker.js';
+import { InkCliStore } from '../../packages/cli/src/ui/ink/store.js';
 import { shouldUseInk } from '../../packages/cli/src/ui/terminal.js';
 import { assert } from '../fixtures/index.js';
 
@@ -54,10 +59,12 @@ function testPlainRendering(): void {
       readCount: 0,
       personalization: 'cold',
     },
+    session: { id: 'cli:default' },
   });
   assert(welcome.includes('paperClaw CLI'), 'welcome renders product name');
   assert(welcome.includes('/status'), 'welcome shows status command');
   assert(welcome.includes('deepseek-chat'), 'welcome shows model');
+  assert(welcome.includes('cli:default'), 'welcome shows session id');
 
   const final = renderPlainMessage({
     kind: 'final',
@@ -85,10 +92,49 @@ function testToolExtraction(): void {
   assert(fromText.join(',') === 'search_arxiv,triage_papers', 'tool names can be parsed from text');
 }
 
+function testSwitchPickerItems(): void {
+  const items = createSwitchPickerItems([
+    {
+      id: 'cli:agent-memory:ABCDEFGHIJ',
+      sessionName: 'Agent Memory',
+      uid: 'ABCDEFGHIJ',
+      channel: 'cli',
+      turnCount: 12,
+      lastActiveAt: '2026-06-10T15:00:00.000Z',
+      preview: 'last useful message',
+    },
+    {
+      id: 'cli:default',
+      turnCount: 4,
+      lastActiveAt: '2026-06-10T14:00:00.000Z',
+      preview: 'default preview',
+    },
+  ], 'cli:default');
+
+  assert(items[0]!.index === 1, 'picker keeps 1-based switch index');
+  assert(items[0]!.label === 'Agent Memory ABCDEFGHIJ', 'picker shows session name and uid');
+  assert(items[0]!.preview === 'last useful message', 'picker exposes preview');
+  assert(items[1]!.active === true, 'picker marks active session');
+  assert(items[1]!.label === '默认会话 default', 'picker gives default session readable label');
+  assert(moveSwitchSelection(0, 1, items.length) === 1, 'selection moves down');
+  assert(moveSwitchSelection(0, -1, items.length) === 1, 'selection wraps up');
+
+  const store = new InkCliStore();
+  store.openSwitchPicker(items);
+  assert(store.getSnapshot().switchPicker?.selectedIndex === 0, 'switch picker defaults to first session');
+  store.replaceMessages([
+    { id: 'old', role: 'system', text: 'old', timestamp: 1 },
+    { id: 'new', role: 'user', text: 'restored history', timestamp: 2 },
+  ]);
+  assert(store.getSnapshot().messages.length === 2, 'store can replace visible transcript');
+  assert(store.getSnapshot().messages[1]!.text === 'restored history', 'replacement transcript is visible');
+}
+
 function main(): void {
   testModeSelection();
   testPlainRendering();
   testToolExtraction();
+  testSwitchPickerItems();
   console.log('✓ cli ui tests passed.');
 }
 

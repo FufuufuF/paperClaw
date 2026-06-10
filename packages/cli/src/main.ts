@@ -2,32 +2,33 @@ import { resolve } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import {
   AgentLoop,
-  buildBasePrompt,
   type Channel,
   CommandRouter,
+  ContextBuilder,
   CronService,
-  createKnowledgeGraphTools,
-  createPaperFileTools,
   createToolContext,
   createLLMClient,
   FeishuChannel,
   FileSessionStore,
   loadEnv,
   type CommandRuntimeStatus,
-  readProfile,
   registerBuiltinCommands,
   ToolRegistry,
   TraceBus,
   getRepoRoot,
 } from '@paperclaw/core';
-import { createReaderTools } from '@paperclaw/reader';
-import { createPaperSearchTools, PaperSearchState } from '@paperclaw/search';
+import { createKnowledgeGraphTools, KNOWLEDGE_SKILLS_DIR } from '@paperclaw/knowledge';
+import { readProfile, PROFILE_SKILLS_DIR } from '@paperclaw/profile';
+import { createPaperFileTools, createReaderTools, PAPER_READ_SKILLS_DIR } from '@paperclaw/reader';
+import { createPaperSearchTools, PAPER_SEARCH_SKILLS_DIR, PaperSearchState } from '@paperclaw/search';
 import { CLIChannel } from './channel/adapter.js';
+import { CliSessionController } from './session-controller.js';
 import {
   createPaperCronRunner,
   PAPER_RECOMMENDATION_TASK_ID,
   registerPaperCronCommand,
 } from './commands/cron.js';
+import { registerPaperCommands } from './commands/paper.js';
 import { allDemoTools } from './tools/demo-tools.js';
 
 /**
@@ -50,7 +51,18 @@ async function main() {
   const llm = createLLMClient(); // 默认 deepseek-chat
   const trace = new TraceBus(tracePath, 'master');
   const sessionStore = new FileSessionStore(sessionsDir);
+  const sessionController = new CliSessionController(sessionStore);
   const searchState = new PaperSearchState();
+  const contextBuilder = new ContextBuilder({
+    workspace: repoRoot,
+    timezone: 'Asia/Shanghai',
+    builtinSkillsDirs: [
+      PAPER_SEARCH_SKILLS_DIR,
+      PAPER_READ_SKILLS_DIR,
+      KNOWLEDGE_SKILLS_DIR,
+      PROFILE_SKILLS_DIR,
+    ],
+  });
 
   // ── Tools (demo) ───────────────────────────────────────────────────
   const tools = new ToolRegistry(undefined, createToolContext({
@@ -71,9 +83,17 @@ async function main() {
   const getRuntimeStatus = async (): Promise<CommandRuntimeStatus> => {
     const profile = await readProfile(profilePath);
     const pdfs = await listRecentPdfs(resolve(outputDir, 'pdfs'));
+    const activeSessionId = sessionController.current();
+    const activeSession = await sessionStore.load(activeSessionId);
     return {
       provider: llm.id.split('/')[0],
       model: llm.id.split('/').slice(1).join('/') || llm.id,
+      session: {
+        id: activeSessionId,
+        sessionName: activeSession?.metadata.sessionName,
+        uid: activeSession?.metadata.uid,
+        channel: activeSession?.metadata.channel,
+      },
       profile: {
         path: profile.path,
         readCount: profile.readSlugs.length,
@@ -85,10 +105,19 @@ async function main() {
 
   // ── Commands (内置) ────────────────────────────────────────────────
   const commands = new CommandRouter();
-  registerBuiltinCommands(commands, { tools, sessionStore });
+  registerBuiltinCommands(commands, {
+    tools,
+    sessionStore,
+    getActiveSessionId: () => sessionController.current(),
+  });
+  registerPaperCommands(commands);
 
   // ── Channel ────────────────────────────────────────────────────────
-  const channel = createChannelFromEnv(getRuntimeStatus);
+  const channel = createChannelFromEnv(getRuntimeStatus, {
+    listSessions: () => sessionStore.list(),
+    loadSession: (id) => sessionStore.load(id),
+    getActiveSessionId: () => sessionController.current(),
+  });
 
   // ── Cron 推荐 ──────────────────────────────────────────────────────
   const cronService = new CronService({
@@ -120,10 +149,12 @@ async function main() {
     },
     channel,
     trace,
-    buildPrompt: () => buildBasePrompt(tools),
+    buildPrompt: () => contextBuilder.buildSystemPrompt(tools),
     status: getRuntimeStatus,
     sendProgress: true,
-    sessionIdFor: (senderId) => channel.name === 'cli' ? 'cli:default' : senderId,
+    sessionIdFor: (senderId) => channel.name === 'cli' ? sessionController.current() : senderId,
+    createSessionId: (name) => sessionController.createNextId(name),
+    switchSession: (sessionId) => sessionController.switchTo(sessionId),
   });
 
   channel.onMessage((msg) => loop.processMessage(msg));
@@ -150,7 +181,14 @@ async function main() {
   await channel.start();
 }
 
-function createChannelFromEnv(getStatus: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>): Channel {
+function createChannelFromEnv(
+  getStatus: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>,
+  sessionUi?: {
+    listSessions?: () => ReturnType<FileSessionStore['list']>;
+    loadSession?: (id: string) => ReturnType<FileSessionStore['load']>;
+    getActiveSessionId?: () => string;
+  },
+): Channel {
   const mode = (process.env.PAPERCLAW_CHANNEL ?? 'cli').toLowerCase();
   if (mode === 'feishu') {
     return new FeishuChannel({
@@ -161,7 +199,13 @@ function createChannelFromEnv(getStatus: () => CommandRuntimeStatus | Promise<Co
       allowedSenderIds: listEnv('FEISHU_ALLOWLIST') ?? listEnv('PAPERCLAW_FEISHU_ALLOWLIST'),
     });
   }
-  return new CLIChannel({ senderId: 'cli:default', getStatus });
+  return new CLIChannel({
+    senderId: 'cli:default',
+    getStatus,
+    listSessions: sessionUi?.listSessions,
+    loadSession: sessionUi?.loadSession,
+    getActiveSessionId: sessionUi?.getActiveSessionId,
+  });
 }
 
 function boolEnv(name: string, fallback: boolean): boolean {

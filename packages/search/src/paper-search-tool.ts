@@ -1,12 +1,12 @@
 import { resolve, sep } from 'node:path';
 import {
-  readProfile,
   type LLMClient,
   type Tool,
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
-import { decomposeQuery, decideReplan, inferInterestForCron } from './flows/planner.js';
+import { readProfile } from '@paperclaw/profile';
+import { decomposeQuery, decideReplan } from './flows/planner.js';
 import { downloadPdfs, type DownloadResult } from './tools/download.js';
 import { searchArxiv, type ArxivCandidate } from './tools/arxiv.js';
 import { triageBatch, type TriageItem } from './tools/triage.js';
@@ -92,6 +92,7 @@ export function createPaperSearchTool(opts: PaperSearchToolOpts & { state: Paper
         query: { type: 'string', description: 'Natural-language paper search query. Required outside cron mode.' },
         mode: { type: 'string', enum: ['fast', 'thorough', 'cron'], description: 'Search mode.' },
         maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum candidates per term.' },
+        excludeArxivIds: { type: 'array', items: { type: 'string' }, description: 'arXiv ids to exclude from results.' },
       },
     },
     async execute(args, ctx) {
@@ -160,6 +161,7 @@ async function runPaperSearch(
   const personalization = profile.readSlugs.length >= 8 ? 'full' : profile.readSlugs.length >= 3 ? 'weak' : 'cold';
 
   const query = typeof args.query === 'string' ? args.query.trim() : '';
+  const excludedArxivIds = normalizeArxivIds(args.excludeArxivIds);
   if (!query && mode !== 'cron') {
     throw new Error('paper_search requires query unless mode="cron"');
   }
@@ -167,10 +169,10 @@ async function runPaperSearch(
   let effectiveQuery = query;
   let terms: string[] = [];
   if (mode === 'cron') {
-    if (profile.raw) {
-      const inferred = await inferInterestForCron(opts.llm, profile.raw);
-      terms = inferred.directions.map((direction) => direction.term).filter(Boolean);
-      effectiveQuery = inferred.summary || terms.join(', ') || 'recent LLM agents papers';
+    if (query) {
+      const decompose = await decomposeQuery(opts.llm, query);
+      terms = decompose.terms;
+      effectiveQuery = query;
     } else {
       effectiveQuery = 'recent LLM agents papers';
       terms = [effectiveQuery];
@@ -187,7 +189,9 @@ async function runPaperSearch(
   const searchFn = opts.searchFn ?? searchArxiv;
   const triageFn = opts.triageFn ?? triageBatch;
   const candidates = dedupeCandidates(
-    (await runSearchTerms(terms, maxResults, searchFn)).filter((item) => !isAlreadyRead(item, profile.readSlugs)),
+    (await runSearchTerms(terms, maxResults, searchFn)).filter((item) =>
+      !isAlreadyRead(item, profile.readSlugs) && !isExcludedArxivId(item, excludedArxivIds),
+    ),
   );
   const triage = await triageFn(candidates, {
     llm: opts.llm,
@@ -218,7 +222,7 @@ async function runPaperSearch(
     if (decision.should_replan) {
       const extraCandidates = dedupeCandidates(
         (await runSearchTerms(decision.new_terms, maxResults, searchFn))
-          .filter((item) => !isAlreadyRead(item, profile.readSlugs)),
+          .filter((item) => !isAlreadyRead(item, profile.readSlugs) && !isExcludedArxivId(item, excludedArxivIds)),
       ).filter((item) => !allCandidates.some((existing) => existing.arxiv_id === item.arxiv_id));
       const extraTriage = await triageFn(extraCandidates, {
         llm: opts.llm,
@@ -304,6 +308,21 @@ function dedupeCandidates(items: ArxivCandidate[]): ArxivCandidate[] {
 function isAlreadyRead(item: ArxivCandidate, slugs: string[]): boolean {
   const id = item.arxiv_id.toLowerCase();
   return slugs.includes(id) || slugs.includes(id.replace(/\//g, '_'));
+}
+
+function isExcludedArxivId(item: ArxivCandidate, excluded: Set<string>): boolean {
+  const id = item.arxiv_id.toLowerCase();
+  return excluded.has(id) || excluded.has(id.replace(/\//g, '_'));
+}
+
+function normalizeArxivIds(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .flatMap((item) => {
+      const id = item.trim().toLowerCase();
+      return id ? [id, id.replace(/\//g, '_')] : [];
+    }));
 }
 
 function countVerdicts(items: TriageItem[]): Record<string, number> {

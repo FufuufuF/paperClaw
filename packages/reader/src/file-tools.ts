@@ -1,9 +1,7 @@
 import { promises as fs } from 'node:fs';
-import { basename, dirname, relative, resolve } from 'node:path';
-import type { ToolContext } from './context.js';
-import type { Tool, ToolResult } from './types.js';
-import { normalizeSlug, WorkspaceGuard } from '../../security/workspace-guard.js';
-import { KnowledgeGraphStore } from '../../knowledge/graph-store.js';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { WorkspaceGuard, type GuardedPath, type Tool, type ToolContext, type ToolResult } from '@paperclaw/core';
+import { KnowledgeGraphStore } from '@paperclaw/knowledge';
 
 export interface NoteListing {
   slug: string;
@@ -98,7 +96,7 @@ const createNoteTool: Tool = {
     const runId = safeSegment(String(args.runId));
     const slug = normalizeSlug(String(args.slug));
     if (!runId || !slug) throw new Error('runId and slug are required');
-    const note = await guard.requireNotePath(`${runId}/papers/${slug}.md`);
+    const note = await requireNotePath(guard, `${runId}/papers/${slug}.md`);
     const exists = await pathExists(note.path);
     if (exists && args.overwrite !== true) {
       return fail(`Note already exists: ${note.relativePath}`);
@@ -200,7 +198,7 @@ const updateProfileSectionTool: Tool = {
   },
   async execute(args, ctx) {
     const guard = guardFromContext(ctx);
-    const profile = await guard.requireProfilePath();
+    const profile = await requireProfilePath(guard);
     const original = await pathExists(profile.path) ? await guard.readText(profile.path) : '# paperClaw Profile\n';
     const next = replaceSection(original, {
       heading: String(args.heading),
@@ -236,7 +234,7 @@ const renameNoteSlugTool: Tool = {
     const note = await resolveNote(guard, args);
     const newSlug = normalizeSlug(String(args.newSlug));
     if (!newSlug) throw new Error('newSlug is required');
-    const target = await guard.requireNotePath(`${relative(guard.outputDir, dirname(note.path))}/${newSlug}.md`);
+    const target = await requireNotePath(guard, `${relative(guard.outputDir, dirname(note.path))}/${newSlug}.md`);
     if (await pathExists(target.path) && args.overwrite !== true) {
       return fail(`Target note already exists: ${target.relativePath}`);
     }
@@ -276,7 +274,7 @@ async function renameKnowledgeNodeForNote(
 }
 
 async function listNotes(guard: WorkspaceGuard): Promise<NoteListing[]> {
-  const paths = await guard.listNotes();
+  const paths = await listNotePaths(guard);
   const out: NoteListing[] = [];
   for (const item of paths) {
     const stat = await fs.stat(item.path);
@@ -296,10 +294,10 @@ async function listNotes(guard: WorkspaceGuard): Promise<NoteListing[]> {
 
 async function resolveNote(guard: WorkspaceGuard, args: Record<string, unknown>) {
   if (typeof args.path === 'string' && args.path.trim()) {
-    return await guard.requireNotePath(args.path);
+    return await requireNotePath(guard, args.path);
   }
   if (typeof args.slug === 'string' && args.slug.trim()) {
-    const found = await guard.findNoteBySlug(args.slug);
+    const found = await findNoteBySlug(guard, args.slug);
     if (!found) throw new Error(`note slug not found: ${args.slug}`);
     return found;
   }
@@ -358,6 +356,84 @@ function upsertSlugLine(markdown: string, slug: string): string {
 function guardFromContext(ctx?: ToolContext): WorkspaceGuard {
   if (!ctx) throw new Error('ToolContext is required for file tools');
   return new WorkspaceGuard({ workspace: ctx.workspace, outputDir: ctx.outputDir });
+}
+
+async function requireProfilePath(guard: WorkspaceGuard, input = 'profile.md'): Promise<GuardedPath> {
+  const resolved = await guard.resolveOutputPath(input);
+  if (resolved.path !== resolve(guard.outputDir, 'profile.md')) {
+    throw new Error('profile writes are limited to output/profile.md');
+  }
+  return resolved;
+}
+
+async function requireNotePath(guard: WorkspaceGuard, input: string): Promise<GuardedPath> {
+  const resolved = await guard.resolveOutputPath(input);
+  if (!isMarkdown(resolved.path) || !resolved.relativePath.split(sep).includes('papers')) {
+    throw new Error('note writes are limited to output/**/papers/*.md');
+  }
+  const parts = resolved.relativePath.split(sep);
+  const papersIdx = parts.lastIndexOf('papers');
+  if (papersIdx < 1 || papersIdx !== parts.length - 2) {
+    throw new Error('note path must be output/<run_id>/papers/<slug>.md');
+  }
+  return resolved;
+}
+
+async function findNoteBySlug(guard: WorkspaceGuard, slug: string): Promise<GuardedPath | null> {
+  const safe = normalizeSlug(slug);
+  if (!safe) throw new Error('slug is required');
+  const notes = await listNotePaths(guard);
+  const matches = notes.filter((note) => basename(note.path, '.md') === safe);
+  if (matches.length === 0) return null;
+  const withStats = await Promise.all(matches.map(async (note) => ({
+    note,
+    mtimeMs: (await fs.stat(note.path)).mtimeMs,
+  })));
+  withStats.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return withStats[0]!.note;
+}
+
+async function listNotePaths(guard: WorkspaceGuard): Promise<GuardedPath[]> {
+  const out: GuardedPath[] = [];
+  await walkOutput(guard.outputDir, async (path, rel) => {
+    const parts = rel.split(sep);
+    if (parts.includes('papers') && parts.at(-1)?.endsWith('.md')) {
+      out.push({ path, relativePath: rel });
+    }
+  });
+  return out.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+}
+
+async function walkOutput(root: string, visitor: (path: string, rel: string) => Promise<void> | void): Promise<void> {
+  await fs.mkdir(root, { recursive: true });
+  const walk = async (dir: string): Promise<void> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const path = resolve(dir, entry.name);
+      const rel = relative(root, path);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        await walk(path);
+        continue;
+      }
+      if (entry.isFile()) await visitor(path, rel);
+    }
+  };
+  await walk(root);
+}
+
+function normalizeSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\.md$/i, '')
+    .replace(/[^a-z0-9._/-]+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+}
+
+function isMarkdown(path: string): boolean {
+  return path.toLowerCase().endsWith('.md');
 }
 
 function fileWriteConfirmation(action: string): Tool['confirmation'] {

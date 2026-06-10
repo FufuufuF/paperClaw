@@ -317,6 +317,12 @@ async function testProfileUpdaterReplacesExistingSlug(): Promise<void> {
     assert(profile.includes('verdict: adopt'), 'profile updater replaces old verdict for same slug');
     assert(profile.includes('output/new-run/papers/2401.07324.md'), 'profile updater replaces old note path for same slug');
     assert(!profile.includes('/old/bad-note.md'), 'profile no longer points to old bad note');
+
+    const kg = JSON.parse(await readFile(join(outputDir, 'knowledge-index.json'), 'utf8')) as {
+      papers: Record<string, { status: string; summary_short?: string }>;
+    };
+    assert(kg.papers['2401.07324']?.status === 'read', 'completed reading marks knowledge node read');
+    assert(kg.papers['2401.07324']?.summary_short?.includes('值得继续跟进'), 'completed reading writes summary_short');
   });
 }
 

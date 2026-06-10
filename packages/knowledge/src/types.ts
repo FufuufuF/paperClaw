@@ -18,6 +18,7 @@ export type PendingLinkStatus = 'pending_user_review' | 'committed' | 'rejected'
 export interface KnowledgePaperNode {
   id: string;
   title: string;
+  summary_short?: string;
   note_path: string;
   arxiv_id?: string;
   status: KnowledgePaperStatus;
@@ -72,6 +73,8 @@ export interface KnowledgeIndex {
 export interface KnowledgeNeighbor {
   paper_id: string;
   title: string;
+  arxiv_id?: string;
+  summary_short?: string;
   direction: 'in' | 'out' | 'both';
   link_id: string;
   link_type: KnowledgeLinkType;

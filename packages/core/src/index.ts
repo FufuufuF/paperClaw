@@ -18,7 +18,6 @@ export {
 
 // ─── Existing infra ─────────────────────────────────────────────────────
 export { TraceBus, type TraceEvent, type TraceEventKind } from './trace.js';
-export { readProfile, type ProfileSnapshot } from './agent/memory.js';
 export {
   DEFAULT_CONFIG,
   findConfigFile,
@@ -97,12 +96,8 @@ export {
   bigTool,
   allDemoTools,
 } from './agent/tools/demo.js';
-export { createPaperFileTools, type NoteListing } from './agent/tools/file-tools.js';
-export { createKnowledgeGraphTools } from './agent/tools/knowledge-tools.js';
-export * from './knowledge/index.js';
 export {
   WorkspaceGuard,
-  normalizeSlug,
   type GuardedPath,
   type WriteResult,
 } from './security/index.js';
@@ -138,6 +133,7 @@ export type {
   Turn,
   TurnRole,
   Session,
+  SessionMetadata,
   SessionStore,
   SessionListing,
 } from './session/manager.js';
@@ -162,12 +158,11 @@ export {
   makeClearCommand,
   makeHelpCommand,
   makeHistoryCommand,
+  makeSwitchCommand,
   makeCostCommand,
   makeSessionCommand,
   makeNewCommand,
   makeModelCommand,
-  makePapersCommand,
-  makeProfileCommand,
   makeStatusCommand,
   makeStopCommand,
 } from './command/builtin.js';

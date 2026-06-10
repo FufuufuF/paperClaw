@@ -23,7 +23,7 @@
     "test:reader": "tsx tests/reader/read-paper-tool.test.ts",
     "test:cron": "tsx tests/cron/service.test.ts && tsx tests/cron/paper-cron-command.test.ts",
     "test:channels": "tsx tests/channels/feishu.test.ts",
-    "test:cli": "tsx tests/cli/ui.test.ts",
+    "test:cli": "tsx tests/cli/ui.test.ts && tsx tests/cli/session-controller.test.ts",
     "test:chat": "tsx tests/agent/smoke.test.ts"
   },
   "devDependencies": {

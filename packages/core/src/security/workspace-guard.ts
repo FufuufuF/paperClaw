@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import { basename, dirname, relative, resolve, sep } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 export interface GuardedPath {
   path: string;
@@ -36,52 +36,6 @@ export class WorkspaceGuard {
       path: candidate,
       relativePath: relative(this.outputDir, candidate),
     };
-  }
-
-  async requireProfilePath(input = 'profile.md'): Promise<GuardedPath> {
-    const resolved = await this.resolveOutputPath(input);
-    if (resolved.path !== resolve(this.outputDir, 'profile.md')) {
-      throw new Error('profile writes are limited to output/profile.md');
-    }
-    return resolved;
-  }
-
-  async requireNotePath(input: string): Promise<GuardedPath> {
-    const resolved = await this.resolveOutputPath(input);
-    if (!isMarkdown(resolved.path) || !resolved.relativePath.split(sep).includes('papers')) {
-      throw new Error('note writes are limited to output/**/papers/*.md');
-    }
-    const parts = resolved.relativePath.split(sep);
-    const papersIdx = parts.lastIndexOf('papers');
-    if (papersIdx < 1 || papersIdx !== parts.length - 2) {
-      throw new Error('note path must be output/<run_id>/papers/<slug>.md');
-    }
-    return resolved;
-  }
-
-  async findNoteBySlug(slug: string): Promise<GuardedPath | null> {
-    const safe = normalizeSlug(slug);
-    if (!safe) throw new Error('slug is required');
-    const notes = await this.listNotes();
-    const matches = notes.filter((note) => basename(note.path, '.md') === safe);
-    if (matches.length === 0) return null;
-    const withStats = await Promise.all(matches.map(async (note) => ({
-      note,
-      mtimeMs: (await fs.stat(note.path)).mtimeMs,
-    })));
-    withStats.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    return withStats[0]!.note;
-  }
-
-  async listNotes(): Promise<GuardedPath[]> {
-    const out: GuardedPath[] = [];
-    await this.walkOutput(async (path, rel) => {
-      const parts = rel.split(sep);
-      if (parts.includes('papers') && parts.at(-1)?.endsWith('.md')) {
-        out.push({ path, relativePath: rel });
-      }
-    });
-    return out.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   }
 
   async readText(path: string, maxChars?: number): Promise<string> {
@@ -158,27 +112,6 @@ export class WorkspaceGuard {
     assertInsideRoot(realParent, realOutput, 'path escapes outputDir through realpath');
   }
 
-  private async walkOutput(visitor: (path: string, rel: string) => Promise<void> | void): Promise<void> {
-    await fs.mkdir(this.outputDir, { recursive: true });
-    const walk = async (dir: string): Promise<void> => {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const path = resolve(dir, entry.name);
-        const rel = relative(this.outputDir, path);
-        if (entry.isSymbolicLink()) {
-          await this.assertNoSymlinkEscape(path);
-          continue;
-        }
-        if (entry.isDirectory()) {
-          await walk(path);
-          continue;
-        }
-        if (entry.isFile()) await visitor(path, rel);
-      }
-    };
-    await walk(this.outputDir);
-  }
-
   private async realOutputDir(): Promise<string> {
     await fs.mkdir(this.outputDir, { recursive: true });
     return await fs.realpath(this.outputDir);
@@ -188,20 +121,6 @@ export class WorkspaceGuard {
     const realOutput = await this.realOutputDir();
     assertInsideRoot(path, realOutput, 'path escapes outputDir through realpath');
   }
-}
-
-export function normalizeSlug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\.md$/i, '')
-    .replace(/[^a-z0-9._/-]+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 100);
-}
-
-function isMarkdown(path: string): boolean {
-  return path.toLowerCase().endsWith('.md');
 }
 
 async function nearestExistingParent(start: string, stop: string): Promise<string> {

@@ -1,10 +1,10 @@
 import { promises as fs } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+export const PROFILE_SKILLS_DIR = fileURLToPath(new URL('./skills', import.meta.url));
 
 /**
- * Snapshot of `output/profile.md`. For now paperClaw only reads this — write-side
- * memory/profile managers will be added with the reader skill.
- *
- * Kept under `agent/memory.ts` to match nanobot's `agent/memory.py` home.
+ * Snapshot of `output/profile.md` for the paperClaw business workflow.
  */
 export interface ProfileSnapshot {
   /** absolute path that was attempted */

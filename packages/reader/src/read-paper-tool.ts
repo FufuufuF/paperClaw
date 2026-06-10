@@ -3,12 +3,12 @@ import type { Dirent } from 'node:fs';
 import { basename, dirname, resolve, sep } from 'node:path';
 import {
   getRunId,
-  KnowledgeGraphStore,
   type LLMClient,
   type Tool,
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
+import { KnowledgeGraphStore } from '@paperclaw/knowledge';
 import { extractPdfText } from './pdf.js';
 import { updateProfileFromNote } from './profile-updater.js';
 import { inferTitleFromText, splitPaperSections, type PaperSection } from './sections.js';
@@ -387,6 +387,7 @@ export async function recordPaperSectionNote(
 
   let profileUpdated = false;
   let verdict = extractVerdict(note);
+  const summaryShort = state.completed ? buildSummaryShort(note, state) : undefined;
   if (state.completed) {
     const profile = await updateProfileFromNote({
       profilePath: state.profilePath,
@@ -404,6 +405,7 @@ export async function recordPaperSectionNote(
     notePath: state.notePath,
     status: state.completed ? 'read' : 'reading',
     verdict,
+    summaryShort,
   });
 
   await opts.trace?.emit('reader', 'observation', {
@@ -442,11 +444,13 @@ async function upsertKnowledgeNode(input: {
   arxivId?: string;
   status: 'reading' | 'read';
   verdict: 'adopt' | 'maybe' | 'skip' | 'unknown';
+  summaryShort?: string;
 }): Promise<void> {
   const store = new KnowledgeGraphStore({ outputDir: input.outputDir });
   await store.upsertNode({
     id: input.slug,
     title: input.title,
+    summary_short: input.summaryShort,
     note_path: input.notePath,
     arxiv_id: input.arxivId,
     status: input.status,
@@ -629,6 +633,58 @@ function extractVerdict(text: string): 'adopt' | 'maybe' | 'skip' | 'unknown' {
   if (lower.includes('skip')) return 'skip';
   if (lower.includes('maybe')) return 'maybe';
   return 'unknown';
+}
+
+function buildSummaryShort(note: string, state: GuidedReadingState): string {
+  const takeaways = extractSubsectionText(note, 'Section Takeaway');
+  const keyPoints = extractSubsectionText(note, 'Key Points');
+  const source = uniqueSummaryLines([...takeaways, ...keyPoints]).slice(0, 4).join(' ');
+  const fallback = `完成 guided reading, verdict=${extractVerdict(note)}.`;
+  return truncateSummary(`${state.title}: ${source || fallback}`, 500);
+}
+
+function uniqueSummaryLines(lines: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(line);
+  }
+  return out;
+}
+
+function extractSubsectionText(markdown: string, heading: string): string[] {
+  const out: string[] = [];
+  const re = new RegExp(`^####\\s+${escapeRegExp(heading)}\\s*$`, 'gim');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(markdown)) !== null) {
+    const start = match.index + match[0].length;
+    const next = markdown.slice(start).search(/\n#{2,4}\s+/);
+    const block = next >= 0 ? markdown.slice(start, start + next) : markdown.slice(start);
+    const cleaned = cleanSummaryBlock(block);
+    if (cleaned) out.push(cleaned);
+  }
+  return out;
+}
+
+function cleanSummaryBlock(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('```'))
+    .map((line) => line.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '').trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncateSummary(text: string, maxChars: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  return clean.length <= maxChars ? clean : `${clean.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function normalizeSlug(value: string): string {
