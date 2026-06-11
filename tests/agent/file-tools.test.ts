@@ -4,8 +4,7 @@ import {
   createToolContext,
   ToolRegistry,
 } from '../../packages/core/src/index.js';
-import { KnowledgeGraphStore } from '../../packages/knowledge/src/index.js';
-import { createPaperFileTools, type NoteListing } from '../../packages/reader/src/index.js';
+import { createPaperFileTools, PaperKnowledgeStore, type NoteListing } from '../../packages/paper/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 
 async function makeRegistry(dir: string): Promise<{ registry: ToolRegistry; outputDir: string }> {
@@ -71,13 +70,12 @@ async function testProfileUpdateAndRename(): Promise<void> {
     const profileText = await readFile(join(outputDir, 'profile.md'), 'utf8');
     assert(profileText.includes('[[old-slug]]'), 'profile section was written');
 
-    const kg = new KnowledgeGraphStore({ outputDir });
+    const kg = new PaperKnowledgeStore({ outputDir });
     await kg.upsertNode({
       id: 'old-slug',
       title: 'Old Slug',
       note_path: join(outputDir, 'run-1/papers/old-slug.md'),
       status: 'reading',
-      verdict: 'maybe',
     });
 
     const renamed = await registry.execute('rename_note_slug', {
