@@ -5,11 +5,14 @@ import {
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
-import { readProfile } from '@paperclaw/profile';
+import { readProfile } from '../shared/profile.js';
 import { decomposeQuery, decideReplan } from './flows/planner.js';
 import { downloadPdfs, type DownloadResult } from './tools/download.js';
 import { searchArxiv, type ArxivCandidate } from './tools/arxiv.js';
 import { triageBatch, type TriageItem } from './tools/triage.js';
+import { PaperKnowledgeStore } from '../knowledge/graph-store.js';
+
+export type PaperSearchSource = 'query' | 'knowledge' | 'hybrid';
 
 export interface PaperSearchToolOpts {
   llm: LLMClient;
@@ -37,6 +40,7 @@ export interface ShortlistItem {
 export interface SearchTrace {
   query: string;
   mode: 'fast' | 'thorough' | 'cron';
+  source: PaperSearchSource;
   terms: string[];
   candidateCount: number;
   triageCounts: Record<string, number>;
@@ -50,6 +54,7 @@ export interface SearchTrace {
 export interface PaperSearchResult {
   query: string;
   mode: 'fast' | 'thorough' | 'cron';
+  source: PaperSearchSource;
   shortlist: ShortlistItem[];
   trace: SearchTrace;
   profile: {
@@ -91,6 +96,7 @@ export function createPaperSearchTool(opts: PaperSearchToolOpts & { state: Paper
       properties: {
         query: { type: 'string', description: 'Natural-language paper search query. Required outside cron mode.' },
         mode: { type: 'string', enum: ['fast', 'thorough', 'cron'], description: 'Search mode.' },
+        source: { type: 'string', enum: ['query', 'knowledge', 'hybrid'], description: 'Search input source: user query, local paper graph, or both.' },
         maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum candidates per term.' },
         excludeArxivIds: { type: 'array', items: { type: 'string' }, description: 'arXiv ids to exclude from results.' },
       },
@@ -155,24 +161,30 @@ async function runPaperSearch(
   ctx?: ToolContext,
 ): Promise<PaperSearchResult> {
   const mode = normalizeMode(args.mode);
+  const source = normalizeSource(args.source, mode);
   const maxResults = clampInt(args.maxResults, 10, 1, 50);
   const profilePath = opts.profilePath ?? resolve(guardedOutputDir(ctx, opts.outputDir), 'profile.md');
   const profile = await readProfile(profilePath);
   const personalization = profile.readSlugs.length >= 8 ? 'full' : profile.readSlugs.length >= 3 ? 'weak' : 'cold';
 
   const query = typeof args.query === 'string' ? args.query.trim() : '';
-  const excludedArxivIds = normalizeArxivIds(args.excludeArxivIds);
-  if (!query && mode !== 'cron') {
-    throw new Error('paper_search requires query unless mode="cron"');
+  const knowledgeContext = source === 'knowledge' || source === 'hybrid'
+    ? await buildKnowledgeSearchContext(guardedOutputDir(ctx, opts.outputDir))
+    : undefined;
+  const excludedArxivIds = normalizeArxivIds([
+    ...arrayArg(args.excludeArxivIds),
+    ...(knowledgeContext?.excludeArxivIds ?? []),
+  ]);
+  if (!query && source === 'query' && mode !== 'cron') {
+    throw new Error('paper_search requires query unless source="knowledge" or mode="cron"');
   }
 
-  let effectiveQuery = query;
+  let effectiveQuery = buildEffectiveQuery({ query, source, knowledgeQuery: knowledgeContext?.query, mode });
   let terms: string[] = [];
   if (mode === 'cron') {
-    if (query) {
-      const decompose = await decomposeQuery(opts.llm, query);
+    if (effectiveQuery) {
+      const decompose = await decomposeQuery(opts.llm, effectiveQuery);
       terms = decompose.terms;
-      effectiveQuery = query;
     } else {
       effectiveQuery = 'recent LLM agents papers';
       terms = [effectiveQuery];
@@ -180,7 +192,7 @@ async function runPaperSearch(
   } else {
     const decompose = await decomposeQuery(
       opts.llm,
-      query,
+      effectiveQuery,
       profile.readSlugs.length > 0 ? profile.readSlugs.slice(0, 20).join(', ') : undefined,
     );
     terms = decompose.terms;
@@ -243,6 +255,7 @@ async function runPaperSearch(
   const trace: SearchTrace = {
     query: effectiveQuery,
     mode,
+    source,
     terms,
     candidateCount: allCandidates.length,
     triageCounts: countVerdicts(allTriage),
@@ -253,6 +266,7 @@ async function runPaperSearch(
   return {
     query: effectiveQuery,
     mode,
+    source,
     shortlist: ranked,
     trace,
     profile: {
@@ -261,6 +275,49 @@ async function runPaperSearch(
       personalization,
     },
   };
+}
+
+export interface KnowledgeSearchContext {
+  query: string;
+  excludeArxivIds: string[];
+}
+
+export async function buildKnowledgeSearchContext(outputDir: string): Promise<KnowledgeSearchContext | undefined> {
+  const store = new PaperKnowledgeStore({ outputDir });
+  const recent = (await store.recentNodes({ status: ['read'], limit: 3 })).results;
+  const anchor = recent.find((item) => item.id && item.title);
+  if (!anchor) return undefined;
+  const neighbors = (await store.neighbors({ id: anchor.id, limit: 5 })).neighbors;
+  const neighborLines = neighbors.length > 0
+    ? neighbors.map((item, idx) => [
+        `${idx + 1}. ${item.title}`,
+        item.shared_terms.length ? `shared_terms=${item.shared_terms.join(',')}` : '',
+        item.reason ? `reason=${item.reason}` : '',
+        item.summary_short ? `summary=${item.summary_short}` : '',
+      ].filter(Boolean).join('; '))
+    : ['(no confirmed neighbors yet)'];
+  const query = [
+    'Find recent arXiv papers that are strong next-read candidates based on this local paper knowledge graph context.',
+    `Recent paper: ${anchor.title} (${anchor.id})`,
+    anchor.key_terms.length ? `Recent paper key terms: ${anchor.key_terms.join(', ')}` : '',
+    anchor.summary_short ? `Recent paper summary: ${anchor.summary_short}` : '',
+    'Related local papers:',
+    ...neighborLines,
+    'Prefer directly related papers over broad surveys.',
+  ].filter(Boolean).join('\n');
+  return {
+    query,
+    excludeArxivIds: Array.from(new Set([
+      anchor.arxiv_id,
+      ...neighbors.map((item) => item.arxiv_id),
+    ].filter((item): item is string => Boolean(item)))),
+  };
+}
+
+function buildEffectiveQuery(input: { query: string; source: PaperSearchSource; knowledgeQuery?: string; mode: 'fast' | 'thorough' | 'cron' }): string {
+  if (input.source === 'query') return input.query || (input.mode === 'cron' ? 'recent LLM agents papers' : '');
+  if (input.source === 'knowledge') return input.knowledgeQuery || input.query || 'recent LLM agents papers';
+  return [input.query, input.knowledgeQuery].filter(Boolean).join('\n\nLocal knowledge context:\n') || 'recent LLM agents papers';
 }
 
 async function runSearchTerms(
@@ -361,6 +418,17 @@ function guardedOutputDir(ctx: ToolContext | undefined, fallback: string, child?
 
 function normalizeMode(value: unknown): 'fast' | 'thorough' | 'cron' {
   return value === 'thorough' || value === 'cron' ? value : 'fast';
+}
+
+function normalizeSource(value: unknown, mode: 'fast' | 'thorough' | 'cron'): PaperSearchSource {
+  if (value === 'knowledge' || value === 'hybrid' || value === 'query') return value;
+  return mode === 'cron' ? 'knowledge' : 'query';
+}
+
+function arrayArg(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
 }
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {

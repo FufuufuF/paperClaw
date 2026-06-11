@@ -11,16 +11,18 @@ import {
   PAPER_RECOMMENDATION_TASK_ID,
   registerPaperCronCommand,
 } from '../../packages/cli/src/commands/cron.js';
-import { PaperSearchState, type PaperSearchResult, type TriageVerdict } from '../../packages/search/src/index.js';
+import { PaperSearchState, type PaperSearchResult, type TriageVerdict } from '../../packages/paper/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 
 function fakeSearchResult(ids: string[], verdicts: TriageVerdict[] = []): PaperSearchResult {
   return {
     query: 'cron inferred query',
     mode: 'cron',
+    source: 'knowledge',
     trace: {
       query: 'cron inferred query',
       mode: 'cron',
+      source: 'knowledge',
       terms: ['agent harness'],
       candidateCount: ids.length,
       triageCounts: { recommend: ids.length, maybe: 0, skip: 0 },
@@ -149,7 +151,7 @@ async function testCronCommandFallsBackToMaybeWhenNoRecommend(): Promise<void> {
   });
 }
 
-async function testCronCommandBuildsQueryFromKnowledgeGraph(): Promise<void> {
+async function testCronDelegatesKnowledgeQueryToPaperSearch(): Promise<void> {
   await withTempDir(async (dir) => {
     let searchArgs: Record<string, unknown> | undefined;
     const kgRecentTool: Tool = {
@@ -219,10 +221,9 @@ async function testCronCommandBuildsQueryFromKnowledgeGraph(): Promise<void> {
     const runner = createPaperCronRunner({ tools, searchState, maxResults: 5 });
     await cronService.trigger(PAPER_RECOMMENDATION_TASK_ID, runner, { force: true });
     assert(searchArgs?.mode === 'cron', 'cron still calls paper_search in cron mode');
-    assert(String(searchArgs?.query ?? '').includes('Agent Tool Failure Harness'), 'cron query includes recent KG node');
-    assert(String(searchArgs?.query ?? '').includes('unseen tools'), 'cron query includes neighbor summary');
-    assert(Array.isArray(searchArgs?.excludeArxivIds), 'cron passes KG arxiv ids as search exclusions');
-    assert((searchArgs!.excludeArxivIds as string[]).join(',') === '2401.00001,2401.00002', 'cron excludes KG arxiv ids');
+    assert(searchArgs?.source === 'knowledge', 'cron delegates knowledge-source search to paper_search');
+    assert(!('query' in searchArgs!), 'cron no longer constructs knowledge query in CLI');
+    assert(!('excludeArxivIds' in searchArgs!), 'cron no longer constructs knowledge exclusions in CLI');
   });
 }
 
@@ -231,7 +232,7 @@ async function main(): Promise<void> {
   await testCronCommandFiltersAlreadySeen();
   await testCronCommandDoesNotPushSkipVerdicts();
   await testCronCommandFallsBackToMaybeWhenNoRecommend();
-  await testCronCommandBuildsQueryFromKnowledgeGraph();
+  await testCronDelegatesKnowledgeQueryToPaperSearch();
   console.log('✓ paper cron command tests passed.');
 }
 

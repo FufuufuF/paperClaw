@@ -19,7 +19,7 @@
     "test:providers": "tsx tests/providers/factory.test.ts",
     "test:context": "tsx tests/agent/context.test.ts",
     "test:runner": "tsx tests/agent/runner.test.ts",
-    "test:search": "tsx tests/search/paper-search-tool.test.ts && pnpm --filter @paperclaw/search exec tsx src/__tests__/smoke.ts",
+    "test:search": "tsx tests/search/paper-search-tool.test.ts && pnpm --filter @paperclaw/paper exec tsx src/search/__tests__/smoke.ts",
     "test:reader": "tsx tests/reader/read-paper-tool.test.ts",
     "test:cron": "tsx tests/cron/service.test.ts && tsx tests/cron/paper-cron-command.test.ts",
     "test:channels": "tsx tests/channels/feishu.test.ts",

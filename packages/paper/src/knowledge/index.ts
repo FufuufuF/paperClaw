@@ -4,20 +4,24 @@ export const KNOWLEDGE_SKILLS_DIR = fileURLToPath(new URL('./skills', import.met
 
 export * from './types.js';
 export {
-  KnowledgeGraphStore,
-  type KnowledgeGraphStoreOpts,
+  PaperKnowledgeStore,
+  readKeyTermVocabulary,
+  type ConsolidatePaperInput,
+  type ConsolidatePaperResult,
   type NeighborInput,
-  type PendingLinkInput,
+  type PaperKnowledgeStoreOpts,
+  type PreviewSectionRelationsInput,
+  type PreviewSectionRelationsResult,
+  type RecentNodesInput,
   type RenameNodeInput,
   type SearchLinksInput,
   type SearchNodeResult,
   type SearchNodesInput,
-  type SuggestLinksInput,
   type UpdateLinkInput,
   type UpsertLinkInput,
   type UpsertNodeInput,
 } from './graph-store.js';
 export {
-  createKnowledgeGraphTools,
-  type KnowledgeGraphToolsOpts,
+  createPaperKnowledgeTools,
+  type PaperKnowledgeToolsOpts,
 } from './knowledge-tools.js';

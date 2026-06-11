@@ -6,11 +6,12 @@ import {
 } from '../../packages/core/src/index.js';
 import {
   createPaperSearchTools,
+  PaperKnowledgeStore,
   PaperSearchState,
   type ShortlistItem,
-} from '../../packages/search/src/index.js';
-import type { ArxivCandidate } from '../../packages/search/src/tools/arxiv.js';
-import type { DownloadResult } from '../../packages/search/src/tools/download.js';
+} from '../../packages/paper/src/index.js';
+import type { ArxivCandidate } from '../../packages/paper/src/search/tools/arxiv.js';
+import type { DownloadResult } from '../../packages/paper/src/search/tools/download.js';
 import { assert, MockLLM, withTempDir } from '../fixtures/index.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 
@@ -107,8 +108,70 @@ async function testPaperSearchAndDownloadHandoff(): Promise<void> {
   });
 }
 
+async function testPaperSearchKnowledgeSourceBuildsQueryInsidePaperPackage(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const outputDir = join(dir, 'output');
+    await mkdir(outputDir, { recursive: true });
+    const store = new PaperKnowledgeStore({ outputDir });
+    await store.upsertNode({
+      id: 'agent-tool-failure-harness',
+      title: 'Agent Tool Failure Harness',
+      summary_short: 'Studies LLM agent tool failures and recovery evaluation.',
+      note_path: join(outputDir, 'run/papers/agent-tool-failure-harness.md'),
+      arxiv_id: '2401.00003',
+      status: 'read',
+      key_terms: ['llm-agents', 'tool-use', 'evaluation'],
+    });
+
+    const llm = new MockLLM();
+    llm.enqueue(
+      {
+        text: '{"terms":["agent tool failure recovery evaluation"],"rationale":"from paper graph"}',
+        usage: { input: 10, output: 4 },
+      },
+      {
+        text: '{"verdict":"recommend","reason":"延续本地知识图谱中的工具失败评估方向","summary":"提出相关评估方法。"}',
+        usage: { input: 20, output: 8 },
+      },
+      {
+        text: '{"verdict":"maybe","reason":"同属工具使用方向但与失败恢复不完全一致","summary":"讨论 LLM agent 工具规划方法。"}',
+        usage: { input: 20, output: 8 },
+      },
+    );
+
+    let searchedTerm = '';
+    const tools = createPaperSearchTools({
+      llm,
+      outputDir,
+      searchFn: async (term) => {
+        searchedTerm = term;
+        return candidates;
+      },
+    });
+    const registry = new ToolRegistry(tools, createToolContext({
+      workspace: dir,
+      outputDir,
+      timezone: 'Asia/Shanghai',
+      request: { channel: 'test', senderId: 'u1', sessionId: 's1' },
+    }));
+
+    const search = await registry.execute('paper_search', {
+      mode: 'cron',
+      source: 'knowledge',
+      maxResults: 5,
+    });
+    assert(search.success === true, 'paper_search source=knowledge succeeds');
+    const data = search.data as { source: string; query: string; shortlist: ShortlistItem[] };
+    assert(data.source === 'knowledge', 'search result records knowledge source');
+    assert(data.query.includes('Agent Tool Failure Harness'), 'knowledge query is built inside paper_search');
+    assert(searchedTerm === 'agent tool failure recovery evaluation', 'knowledge query is decomposed into search terms');
+    assert(data.shortlist.every((item) => item.arxiv_id !== '2401.00003'), 'knowledge source excludes known graph arxiv ids');
+  });
+}
+
 async function main(): Promise<void> {
   await testPaperSearchAndDownloadHandoff();
+  await testPaperSearchKnowledgeSourceBuildsQueryInsidePaperPackage();
   console.log('✓ paper search tool tests passed.');
 }
 

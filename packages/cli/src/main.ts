@@ -17,10 +17,18 @@ import {
   TraceBus,
   getRepoRoot,
 } from '@paperclaw/core';
-import { createKnowledgeGraphTools, KNOWLEDGE_SKILLS_DIR } from '@paperclaw/knowledge';
-import { readProfile, PROFILE_SKILLS_DIR } from '@paperclaw/profile';
-import { createPaperFileTools, createReaderTools, PAPER_READ_SKILLS_DIR } from '@paperclaw/reader';
-import { createPaperSearchTools, PAPER_SEARCH_SKILLS_DIR, PaperSearchState } from '@paperclaw/search';
+import {
+  createPaperFileTools,
+  createPaperKnowledgeTools,
+  createPaperSearchTools,
+  createReaderTools,
+  KNOWLEDGE_SKILLS_DIR,
+  PAPER_READ_SKILLS_DIR,
+  PAPER_SEARCH_SKILLS_DIR,
+  PaperSearchState,
+  PROFILE_SKILLS_DIR,
+  readProfile,
+} from '@paperclaw/paper';
 import { CLIChannel } from './channel/adapter.js';
 import { CliSessionController } from './session-controller.js';
 import {
@@ -72,7 +80,7 @@ async function main() {
   }));
   for (const t of allDemoTools) tools.register(t);
   for (const t of createPaperFileTools()) tools.register(t);
-  for (const t of createKnowledgeGraphTools({ llm })) tools.register(t);
+  for (const t of createPaperKnowledgeTools({ llm })) tools.register(t);
   for (const t of createPaperSearchTools({ llm, outputDir, profilePath, trace, state: searchState })) {
     tools.register(t);
   }

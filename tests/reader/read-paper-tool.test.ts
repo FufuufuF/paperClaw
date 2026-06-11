@@ -9,7 +9,7 @@ import {
   type ReadPaperResult,
   type ReadPaperSectionResult,
   type RecordPaperSectionNoteResult,
-} from '../../packages/reader/src/index.js';
+} from '../../packages/paper/src/index.js';
 import { assert, MockLLM, withTempDir } from '../fixtures/index.js';
 
 async function testReadPaperStartsGuidedReading(): Promise<void> {
@@ -69,7 +69,7 @@ async function testReadPaperStartsGuidedReading(): Promise<void> {
     assert(!JSON.stringify(result).includes('Agent harness paper. It studies tool failures'), 'tool result omits PDF excerpt');
 
     const kg = JSON.parse(await readFile(join(outputDir, 'knowledge-index.json'), 'utf8')) as {
-      papers: Record<string, { title: string; note_path: string; status: string; verdict: string }>;
+      papers: Record<string, { title: string; note_path: string; status: string; key_terms: string[] }>;
       links: unknown[];
     };
     assert(kg.papers['agent-harness-paper']?.status === 'reading', 'read_paper registers a reading knowledge graph node');
@@ -319,10 +319,11 @@ async function testProfileUpdaterReplacesExistingSlug(): Promise<void> {
     assert(!profile.includes('/old/bad-note.md'), 'profile no longer points to old bad note');
 
     const kg = JSON.parse(await readFile(join(outputDir, 'knowledge-index.json'), 'utf8')) as {
-      papers: Record<string, { status: string; summary_short?: string }>;
+      papers: Record<string, { status: string; summary_short?: string; key_terms: string[] }>;
     };
     assert(kg.papers['2401.07324']?.status === 'read', 'completed reading marks knowledge node read');
     assert(kg.papers['2401.07324']?.summary_short?.includes('值得继续跟进'), 'completed reading writes summary_short');
+    assert(Array.isArray(kg.papers['2401.07324']?.key_terms), 'completed reading writes key_terms array');
   });
 }
 
