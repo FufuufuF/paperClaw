@@ -8,9 +8,9 @@ import {
   type ToolContext,
   type TraceBus,
 } from '@paperclaw/core';
-import { KnowledgeGraphStore } from '@paperclaw/knowledge';
+import { PaperKnowledgeStore } from '../knowledge/graph-store.js';
 import { extractPdfText } from './pdf.js';
-import { updateProfileFromNote } from './profile-updater.js';
+import { updateProfileFromNote } from '../shared/profile-updater.js';
 import { inferTitleFromText, splitPaperSections, type PaperSection } from './sections.js';
 
 export interface ReaderToolOpts {
@@ -280,14 +280,13 @@ export async function readPaper(
   await fs.mkdir(dirname(statePath), { recursive: true });
   await fs.writeFile(notePath, note, 'utf8');
   await fs.writeFile(statePath, JSON.stringify(state, null, 2), 'utf8');
-  await upsertKnowledgeNode({
+  await upsertPaperNode({
     outputDir,
     slug,
     title,
     notePath,
     arxivId: input.arxivId,
     status: 'reading',
-    verdict: 'maybe',
   });
 
   await opts.trace?.emit('reader', 'observation', {
@@ -386,7 +385,7 @@ export async function recordPaperSectionNote(
   await fs.writeFile(statePath, JSON.stringify(state, null, 2), 'utf8');
 
   let profileUpdated = false;
-  let verdict = extractVerdict(note);
+  const verdict = extractVerdict(note);
   const summaryShort = state.completed ? buildSummaryShort(note, state) : undefined;
   if (state.completed) {
     const profile = await updateProfileFromNote({
@@ -398,15 +397,32 @@ export async function recordPaperSectionNote(
     });
     profileUpdated = profile.created;
   }
-  await upsertKnowledgeNode({
-    outputDir,
-    slug: state.slug,
-    title: state.title,
-    notePath: state.notePath,
-    status: state.completed ? 'read' : 'reading',
-    verdict,
-    summaryShort,
-  });
+  if (state.completed) {
+    await upsertPaperNode({
+      outputDir,
+      slug: state.slug,
+      title: state.title,
+      notePath: state.notePath,
+      status: 'read',
+      summaryShort,
+    });
+    await consolidatePaperNode({
+      outputDir,
+      slug: state.slug,
+      title: state.title,
+      notePath: state.notePath,
+      llm: opts.llm,
+    });
+  } else {
+    await upsertPaperNode({
+      outputDir,
+      slug: state.slug,
+      title: state.title,
+      notePath: state.notePath,
+      status: 'reading',
+      summaryShort,
+    });
+  }
 
   await opts.trace?.emit('reader', 'observation', {
     slug: state.slug,
@@ -436,17 +452,16 @@ export async function recordPaperSectionNote(
   };
 }
 
-async function upsertKnowledgeNode(input: {
+async function upsertPaperNode(input: {
   outputDir: string;
   slug: string;
   title: string;
   notePath: string;
   arxivId?: string;
   status: 'reading' | 'read';
-  verdict: 'adopt' | 'maybe' | 'skip' | 'unknown';
   summaryShort?: string;
 }): Promise<void> {
-  const store = new KnowledgeGraphStore({ outputDir: input.outputDir });
+  const store = new PaperKnowledgeStore({ outputDir: input.outputDir });
   await store.upsertNode({
     id: input.slug,
     title: input.title,
@@ -454,7 +469,22 @@ async function upsertKnowledgeNode(input: {
     note_path: input.notePath,
     arxiv_id: input.arxivId,
     status: input.status,
-    verdict: input.verdict,
+  });
+}
+
+async function consolidatePaperNode(input: {
+  outputDir: string;
+  slug: string;
+  title: string;
+  notePath: string;
+  llm: LLMClient;
+}): Promise<void> {
+  const store = new PaperKnowledgeStore({ outputDir: input.outputDir });
+  await store.consolidatePaper({
+    id: input.slug,
+    title: input.title,
+    note_path: input.notePath,
+    llm: input.llm,
   });
 }
 

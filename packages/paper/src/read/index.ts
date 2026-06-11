@@ -29,4 +29,4 @@ export {
 export {
   updateProfileFromNote,
   type ProfileUpdateResult,
-} from './profile-updater.js';
+} from '../shared/profile-updater.js';

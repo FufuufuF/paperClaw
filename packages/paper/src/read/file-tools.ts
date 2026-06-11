@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { WorkspaceGuard, type GuardedPath, type Tool, type ToolContext, type ToolResult } from '@paperclaw/core';
-import { KnowledgeGraphStore } from '@paperclaw/knowledge';
+import { PaperKnowledgeStore } from '../knowledge/graph-store.js';
 
 export interface NoteListing {
   slug: string;
@@ -264,7 +264,7 @@ async function renameKnowledgeNodeForNote(
   input: { oldSlug: string; newSlug: string; notePath: string },
 ): Promise<{ renamed: boolean }> {
   if (!ctx) return { renamed: false };
-  const store = new KnowledgeGraphStore({ outputDir: ctx.outputDir });
+  const store = new PaperKnowledgeStore({ outputDir: ctx.outputDir });
   const result = await store.renameNode({
     oldId: input.oldSlug,
     newId: input.newSlug,

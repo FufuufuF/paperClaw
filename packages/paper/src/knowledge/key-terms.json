@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "terms": [
+    {
+      "id": "llm-agents",
+      "label": "LLM Agents",
+      "description": "Language-model agents that plan, act, use tools, or execute multi-step tasks."
+    },
+    {
+      "id": "tool-use",
+      "label": "Tool Use",
+      "description": "External API/tool calling, tool learning, function calling, and execution feedback."
+    },
+    {
+      "id": "evaluation",
+      "label": "Evaluation",
+      "description": "Evaluation methodology, metrics, protocols, reliability studies, and error analysis."
+    },
+    {
+      "id": "benchmarks",
+      "label": "Benchmarks",
+      "description": "Datasets, benchmark suites, tasks, and leaderboards used for empirical comparison."
+    },
+    {
+      "id": "planning",
+      "label": "Planning",
+      "description": "Task decomposition, search, reflection, retry, control flow, and long-horizon planning."
+    },
+    {
+      "id": "retrieval",
+      "label": "Retrieval",
+      "description": "Retrieval augmented generation, indexing, search, memory lookup, and context selection."
+    },
+    {
+      "id": "multi-agent",
+      "label": "Multi-Agent",
+      "description": "Multiple agents, role specialization, collaboration, debate, or distributed coordination."
+    },
+    {
+      "id": "knowledge-graphs",
+      "label": "Knowledge Graphs",
+      "description": "Graph-structured knowledge, entity/relation extraction, graph memory, and graph reasoning."
+    },
+    {
+      "id": "reasoning",
+      "label": "Reasoning",
+      "description": "Reasoning strategies, chain-of-thought-like methods, verification, and problem solving."
+    },
+    {
+      "id": "safety",
+      "label": "Safety",
+      "description": "Robustness, harmful behavior, alignment, guardrails, trustworthiness, and risk control."
+    },
+    {
+      "id": "fine-tuning",
+      "label": "Fine-Tuning",
+      "description": "Supervised tuning, preference optimization, instruction tuning, and model adaptation."
+    },
+    {
+      "id": "datasets",
+      "label": "Datasets",
+      "description": "Data collection, curation, annotation, synthesis, and dataset quality."
+    },
+    {
+      "id": "systems",
+      "label": "Systems",
+      "description": "Runtime systems, orchestration, infrastructure, latency, cost, and deployment engineering."
+    },
+    {
+      "id": "multimodal",
+      "label": "Multimodal",
+      "description": "Vision-language, audio-language, document understanding, and multimodal interaction."
+    },
+    {
+      "id": "human-ai-interaction",
+      "label": "Human-AI Interaction",
+      "description": "User studies, interfaces, collaboration, feedback, and human-in-the-loop workflows."
+    },
+    {
+      "id": "robotics",
+      "label": "Robotics",
+      "description": "Embodied agents, control, manipulation, navigation, imitation, and real-world robotics."
+    }
+  ]
+}

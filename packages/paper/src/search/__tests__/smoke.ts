@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { TraceBus } from '@paperclaw/core';
-import { readProfile } from '@paperclaw/profile';
+import { readProfile } from '../../shared/profile.js';
 
 const SAMPLE_PROFILE = `# User Reading Profile
 
