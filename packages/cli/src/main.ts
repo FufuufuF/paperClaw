@@ -1,16 +1,23 @@
 import { resolve } from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { cp, readdir, rename, rm } from 'node:fs/promises';
 import {
   AgentLoop,
+  AutoCompact,
   type Channel,
   CommandRouter,
+  Consolidator,
   ContextBuilder,
   CronService,
   createToolContext,
   createLLMClient,
+  defaultStoreDir,
+  Dream,
   FeishuChannel,
   FileSessionStore,
   loadEnv,
+  MemoryStore,
+  SessionManager,
   type CommandRuntimeStatus,
   registerBuiltinCommands,
   ToolRegistry,
@@ -49,16 +56,31 @@ async function main() {
   loadEnv();
 
   const repoRoot = getRepoRoot();
-  const outputDir = resolve(repoRoot, 'output');
-  const sessionsDir = resolve(outputDir, 'sessions');
-  const tracePath = resolve(outputDir, 'chat-trace.jsonl');
-  const profilePath = resolve(outputDir, 'profile.md');
-  const cronStatePath = resolve(outputDir, 'cron-state.json');
+  const explicitStoreDir = process.env.PAPERCLAW_STORE_DIR ?? process.env.PAPERCLAW_OUTPUT_DIR;
+  const storeDir = resolveStoreDir(repoRoot);
+  await migrateLegacyOutputDir(repoRoot, storeDir, explicitStoreDir === undefined);
+  const outputDir = storeDir;
+  const sessionsDir = resolve(storeDir, 'sessions');
+  const tracePath = resolve(storeDir, 'chat-trace.jsonl');
+  const profilePath = resolve(storeDir, 'profile.md');
+  const cronStatePath = resolve(storeDir, 'cron-state.json');
 
   // ── Infra ──────────────────────────────────────────────────────────
   const llm = createLLMClient(); // 默认 deepseek-chat
   const trace = new TraceBus(tracePath, 'master');
   const sessionStore = new FileSessionStore(sessionsDir);
+  const sessionManager = new SessionManager(sessionStore);
+  const memoryStore = new MemoryStore(storeDir);
+  const consolidator = new Consolidator({ store: memoryStore, llm, sessions: sessionManager });
+  const autoCompact = new AutoCompact({
+    sessions: sessionManager,
+    consolidator,
+    idleCompactAfterMinutes: numberEnv(
+      'PAPERCLAW_IDLE_COMPACT_AFTER_MINUTES',
+      numberEnv('PAPERCLAW_SESSION_TTL_MINUTES', 0),
+    ),
+  });
+  const dream = new Dream({ store: memoryStore, llm, storeDir });
   const sessionController = new CliSessionController(sessionStore);
   const searchState = new PaperSearchState();
   const contextBuilder = new ContextBuilder({
@@ -119,6 +141,10 @@ async function main() {
     getActiveSessionId: () => sessionController.current(),
   });
   registerPaperCommands(commands);
+  commands.register({ command: '/dream', title: 'Dream', description: '整理 history 到长期记忆' }, async () => {
+    const result = await dream.run();
+    return { text: result.summary, metadata: { dream: true, ...result } };
+  });
 
   // ── Channel ────────────────────────────────────────────────────────
   const channel = createChannelFromEnv(getRuntimeStatus, {
@@ -128,13 +154,22 @@ async function main() {
   });
 
   // ── Cron 推荐 ──────────────────────────────────────────────────────
+  const paperCronEnabled = boolEnv('PAPERCLAW_CRON_ENABLED', false);
+  const dreamCronEnabled = boolEnv('PAPERCLAW_DREAM_ENABLED', false);
   const cronService = new CronService({
     statePath: cronStatePath,
-    tasks: [{
-      id: PAPER_RECOMMENDATION_TASK_ID,
-      intervalMinutes: numberEnv('PAPERCLAW_CRON_INTERVAL_MINUTES', 60 * 24 * 7),
-      enabled: boolEnv('PAPERCLAW_CRON_ENABLED', false),
-    }],
+    tasks: [
+      {
+        id: PAPER_RECOMMENDATION_TASK_ID,
+        intervalMinutes: numberEnv('PAPERCLAW_CRON_INTERVAL_MINUTES', 60 * 24 * 7),
+        enabled: paperCronEnabled,
+      },
+      {
+        id: DREAM_TASK_ID,
+        intervalMinutes: numberEnv('PAPERCLAW_DREAM_INTERVAL_MINUTES', 60 * 24),
+        enabled: dreamCronEnabled,
+      },
+    ],
   });
   const runCronRecommendation = createPaperCronRunner({
     tools,
@@ -145,7 +180,7 @@ async function main() {
 
   // ── AgentLoop ──────────────────────────────────────────────────────
   const loop = new AgentLoop({
-    sessionStore,
+    sessionManager,
     commands,
     runner: {
       tools,
@@ -157,7 +192,11 @@ async function main() {
     },
     channel,
     trace,
-    buildPrompt: () => contextBuilder.buildSystemPrompt(tools),
+    autoCompact,
+    buildPrompt: async (ctx) => contextBuilder.buildSystemPrompt(tools, {
+      sessionSummary: ctx?.sessionSummary,
+      contextBlocks: await memoryContextBlocks(memoryStore),
+    }),
     status: getRuntimeStatus,
     sendProgress: true,
     sessionIdFor: (senderId) => channel.name === 'cli' ? sessionController.current() : senderId,
@@ -167,7 +206,11 @@ async function main() {
 
   channel.onMessage((msg) => loop.processMessage(msg));
 
-  if (boolEnv('PAPERCLAW_CRON_ENABLED', false)) {
+  autoCompact.start({
+    activeSessionIds: () => loop.getBusySessionIds(),
+  });
+
+  if (paperCronEnabled || dreamCronEnabled) {
     await cronService.start({
       [PAPER_RECOMMENDATION_TASK_ID]: async (ctx) => {
         const result = await runCronRecommendation(ctx);
@@ -178,15 +221,52 @@ async function main() {
         });
         return result;
       },
+      [DREAM_TASK_ID]: async () => {
+        const result = await dream.run();
+        return { summary: result.summary, data: result };
+      },
     });
   }
 
   // SIGINT: 让 channel.stop 优雅关闭 readline/Ink.
   process.on('SIGINT', () => {
+    autoCompact.stop();
+    cronService.stop();
     void channel.stop().finally(() => process.exit(0));
   });
 
   await channel.start();
+}
+
+const DREAM_TASK_ID = 'dream-memory';
+
+async function memoryContextBlocks(store: MemoryStore): Promise<Array<{ title: string; content: string }>> {
+  const memory = await store.getMemoryContext();
+  const soul = (await store.readSoul()).trim();
+  const user = (await store.readUser()).trim();
+  return [
+    memory ? { title: 'Memory Context', content: memory } : null,
+    soul ? { title: 'SOUL', content: soul } : null,
+    user ? { title: 'USER', content: user } : null,
+  ].filter((item): item is { title: string; content: string } => item !== null);
+}
+
+function resolveStoreDir(repoRoot: string): string {
+  const configured = process.env.PAPERCLAW_STORE_DIR ?? process.env.PAPERCLAW_OUTPUT_DIR;
+  return configured ? resolve(repoRoot, configured) : defaultStoreDir(repoRoot);
+}
+
+async function migrateLegacyOutputDir(repoRoot: string, storeDir: string, enabled: boolean): Promise<void> {
+  if (!enabled) return;
+  const legacy = resolve(repoRoot, 'output');
+  if (storeDir === legacy || existsSync(storeDir) || !existsSync(legacy)) return;
+  try {
+    await rename(legacy, storeDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
+    await cp(legacy, storeDir, { recursive: true });
+    await rm(legacy, { recursive: true, force: true });
+  }
 }
 
 function createChannelFromEnv(

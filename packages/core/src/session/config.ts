@@ -7,7 +7,7 @@ export interface SessionConfig {
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  dir: 'output/sessions',
+  dir: 'nanobot-store/sessions',
   maxMessages: 120,
   ttlMinutes: 0,
 };
