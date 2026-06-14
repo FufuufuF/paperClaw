@@ -76,7 +76,7 @@ async function testManagerUpdateSerializes(): Promise<void> {
   });
 }
 
-async function testManagerSaveAppliesCap(): Promise<void> {
+async function testManagerSavePersistsFullTranscript(): Promise<void> {
   await withTempDir(async (dir) => {
     const store = new FileSessionStore(join(dir, 'sessions'));
     const manager = new SessionManager(store, { config: { maxMessages: 3 } });
@@ -86,8 +86,11 @@ async function testManagerSaveAppliesCap(): Promise<void> {
     await manager.save(session);
     const saved = await store.load('cli:default');
     assert(saved !== null, 'session saved');
-    assert(saved!.turns.length === 3, `session capped to 3 turns (got ${saved!.turns.length})`);
-    assert(saved!.turns[0]!.role === 'user', 'saved suffix starts at user');
+    assert(saved!.turns.length === 5, `session persists all turns (got ${saved!.turns.length})`);
+
+    const replay = manager.getHistory(saved!, 3);
+    assert(replay.length === 3, `replay history capped to 3 turns (got ${replay.length})`);
+    assert(replay[0]!.role === 'user', 'replay suffix starts at user');
   });
 }
 
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
   await testCorruptRecovery();
   await testLegalSuffix();
   await testManagerUpdateSerializes();
-  await testManagerSaveAppliesCap();
+  await testManagerSavePersistsFullTranscript();
   console.log('✓ session manager tests passed.');
 }
 

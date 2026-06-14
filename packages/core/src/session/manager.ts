@@ -35,6 +35,14 @@ export interface SessionMetadata {
   lastActiveAt: string;
   totalUsage: { input: number; output: number };
   runtimeCheckpoint?: AgentCheckpoint;
+  _lastSummary?: { text: string; lastActive: string };
+  _compact?: {
+    sessionSummary: string;
+    historyFacts?: string;
+    summarizedThroughTurn: number;
+    lastCompactedAt: string;
+    lastActiveAt: string;
+  };
   /** display name provided by the user, e.g. `/new agent memory` */
   sessionName?: string;
   /** stable short random id generated at session creation */
@@ -190,7 +198,6 @@ export class SessionManager {
 
   async save(session: Session): Promise<void> {
     const copy = cloneSession(session);
-    copy.turns = retainRecentLegalSuffix(copy.turns, this.config.maxMessages);
     copy.metadata.lastActiveAt = new Date().toISOString();
     await this.store.save(copy);
   }
@@ -301,6 +308,8 @@ function normalizeSession(value: unknown, fallbackId: string): Session {
         output: raw.metadata?.totalUsage?.output ?? 0,
       },
       runtimeCheckpoint: raw.metadata?.runtimeCheckpoint,
+      _lastSummary: isLastSummary(raw.metadata?._lastSummary) ? raw.metadata._lastSummary : undefined,
+      _compact: isCompactMetadata(raw.metadata?._compact) ? raw.metadata._compact : undefined,
       sessionName: typeof raw.metadata?.sessionName === 'string' ? raw.metadata.sessionName : undefined,
       uid: typeof raw.metadata?.uid === 'string' ? raw.metadata.uid : undefined,
       channel: typeof raw.metadata?.channel === 'string' ? raw.metadata.channel : undefined,
@@ -314,6 +323,25 @@ function isTurn(value: unknown): value is Turn {
     (turn.role === 'user' || turn.role === 'assistant' || turn.role === 'tool') &&
     typeof turn.content === 'string' &&
     typeof turn.timestamp === 'number'
+  );
+}
+
+function isLastSummary(value: unknown): value is { text: string; lastActive: string } {
+  const summary = value as { text?: unknown; lastActive?: unknown };
+  return typeof summary?.text === 'string' && typeof summary.lastActive === 'string';
+}
+
+function isCompactMetadata(value: unknown): value is NonNullable<SessionMetadata['_compact']> {
+  const meta = value as Partial<NonNullable<SessionMetadata['_compact']>>;
+  const summarizedThroughTurn = meta?.summarizedThroughTurn;
+  return (
+    typeof meta?.sessionSummary === 'string' &&
+    typeof summarizedThroughTurn === 'number' &&
+    Number.isInteger(summarizedThroughTurn) &&
+    summarizedThroughTurn >= 0 &&
+    typeof meta.lastCompactedAt === 'string' &&
+    typeof meta.lastActiveAt === 'string' &&
+    (meta.historyFacts === undefined || typeof meta.historyFacts === 'string')
   );
 }
 

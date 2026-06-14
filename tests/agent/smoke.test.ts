@@ -9,6 +9,7 @@ import {
   AgentLoop,
   buildBasePrompt,
   CommandRouter,
+  createNewSession,
   FileSessionStore,
   registerBuiltinCommands,
   ToolRegistry,
@@ -195,12 +196,13 @@ async function testCommands(): Promise<void> {
     await h.channel.simulate('/cost');
     assert(h.channel.lastText().includes('input'), '/cost 显示 input');
 
-    // /clear — 清空
+    // /clear — 无损, 不删除当前 transcript
+    session = await h.sessionStore.load('cli:default');
+    const beforeClearTurns = session!.turns.length;
     await h.channel.simulate('/clear');
     session = await h.sessionStore.load('cli:default');
-    // /clear 之后 session.turns 应该只有 /clear 自己 (user 输入 /clear + bot "已清空")
-    assert(session!.turns.length === 2, `/clear 后留 2 turn (got ${session!.turns.length})`);
-    assert(session!.metadata.totalUsage.input === 0, '/clear 后 usage 归零');
+    assert(session!.turns.length === beforeClearTurns + 2, `/clear 不删除旧 turns (got ${session!.turns.length})`);
+    assert(session!.metadata.totalUsage.input === 30, '/clear 不重置历史 usage');
   });
 }
 
@@ -338,6 +340,53 @@ async function testRuntimeContextAndSessionLock(): Promise<void> {
   });
 }
 
+async function testCompactedSessionSummaryReplay(): Promise<void> {
+  console.log('\n── extra: compacted session summary replay ──');
+  await withTempDir(async (dir) => {
+    const sessionStore = new FileSessionStore(join(dir, 'sessions'));
+    const session = createNewSession('cli:default');
+    session.turns.push(
+      { role: 'user', content: 'old user', timestamp: Date.now(), tokenEstimate: 1 },
+      { role: 'assistant', content: 'old assistant', timestamp: Date.now(), tokenEstimate: 1 },
+      { role: 'user', content: 'recent user', timestamp: Date.now(), tokenEstimate: 1 },
+      { role: 'assistant', content: 'recent assistant', timestamp: Date.now(), tokenEstimate: 1 },
+    );
+    session.metadata._compact = {
+      sessionSummary: 'Archived old context',
+      summarizedThroughTurn: 2,
+      lastCompactedAt: new Date().toISOString(),
+      lastActiveAt: session.metadata.lastActiveAt,
+    };
+    await sessionStore.save(session);
+
+    const llm = new MockLLM();
+    const tools = new ToolRegistry();
+    const channel = new MockChannel();
+    const loop = new AgentLoop({
+      sessionStore,
+      commands: new CommandRouter(),
+      runner: {
+        tools,
+        llm,
+        maxIterations: 5,
+        contextBudget: 4000,
+        agentId: 'master',
+      },
+      channel,
+      buildPrompt: (ctx) => `summary=${ctx?.sessionSummary ?? ''}`,
+      sessionIdFor: () => 'cli:default',
+    });
+
+    llm.enqueue({ text: 'ok', usage: { input: 10, output: 3 } });
+    await loop.processMessage({ id: 'compact-1', senderId: 'cli:default', text: 'continue', timestamp: Date.now() });
+
+    assert(llm.receivedMessages[0]!.system?.includes('Archived old context') === true, 'system prompt receives session summary');
+    const contents = llm.receivedMessages[0]!.messages.map((message) => message.content).join('\n');
+    assert(!contents.includes('old user'), 'replay excludes summarized old turns');
+    assert(contents.includes('recent user'), 'replay keeps unsummarized recent turns');
+  });
+}
+
 // ─── extra: 错误路径 — 未注册 / 命令不走 LLM, JSON parse 错误回包 ────────
 async function testErrorPaths(): Promise<void> {
   console.log('\n── extra: 错误路径 ──');
@@ -420,6 +469,7 @@ async function main() {
   await testCompaction();
   await testChannelDecoupling();
   await testRuntimeContextAndSessionLock();
+  await testCompactedSessionSummaryReplay();
   await testErrorPaths();
   await testLoopProgressAndErrorPersistence();
   console.log('\n✓ 所有 smoke 测试通过.');

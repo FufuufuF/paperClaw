@@ -12,6 +12,8 @@ import {
 } from '../session/manager.js';
 import type { TraceBus } from '../trace.js';
 import { buildSessionMessages, estimateTokens } from './context.js';
+import type { AutoCompact } from './autocompact.js';
+import { getLastSessionSummary, sessionReplayView } from './consolidator.js';
 import { AgentRunner, type AgentCheckpoint, type RunnerConfig } from './runner.js';
 
 export interface AgentLoopConfig {
@@ -46,6 +48,8 @@ export interface AgentLoopConfig {
   }>;
   /** Optional hook used by session commands such as /new and /switch. */
   switchSession?: (sessionId: string) => void | Promise<void>;
+  /** Optional idle-session compactor. It must never mutate persisted turns. */
+  autoCompact?: AutoCompact;
   /** 是否向 channel 发送 progress/tool_hint envelope. 默认 false 以保持旧测试兼容. */
   sendProgress?: boolean;
 }
@@ -68,6 +72,7 @@ export interface TurnContext {
   userTurn: Turn;
   state: TurnState;
   systemPrompt?: string;
+  sessionSummary?: string;
   runnerResult?: Awaited<ReturnType<AgentRunner['run']>>;
   commandName?: string;
 }
@@ -109,20 +114,36 @@ export class AgentLoop {
     return true;
   }
 
+  getBusySessionIds(): string[] {
+    return Array.from(new Set([...this.activeTasks.keys(), ...this.locks.keys()]));
+  }
+
   private async processLocked(sessionId: string, inbound: InboundMessage): Promise<void> {
     const manager = this.getOrCreateSessionManager();
     let ctx: TurnContext | undefined;
 
     try {
       // ── RESTORE ─────────────────────────────────────────────────────
-      const session = await manager.getOrCreate(sessionId);
+      let session = await manager.getOrCreate(sessionId);
+      const prepared = await this.config.autoCompact?.prepareSession(session, sessionId);
+      if (prepared) {
+        session = prepared.session;
+      }
+      const sessionSummary = prepared?.summary ?? getLastSessionSummary(session)?.text;
       const userTurn: Turn = {
         role: 'user',
         content: inbound.text,
         tokenEstimate: estimateTokens(inbound.text),
         timestamp: inbound.timestamp,
       };
-      ctx = { inbound, sessionId, session, userTurn, state: 'RESTORE' };
+      ctx = {
+        inbound,
+        sessionId,
+        session,
+        userTurn,
+        state: 'RESTORE',
+        sessionSummary,
+      };
       session.turns.push(userTurn);
       session.metadata.lastActiveAt = new Date().toISOString();
       session.metadata.runtimeCheckpoint = undefined;
@@ -131,7 +152,6 @@ export class AgentLoop {
 
       // ── COMPACT ─────────────────────────────────────────────────────
       ctx.state = 'COMPACT';
-      session.turns = manager.getHistory(session);
       await this.traceState(ctx, 'COMPACT');
 
       // ── COMMAND ─────────────────────────────────────────────────────
@@ -197,7 +217,11 @@ export class AgentLoop {
       ctx.state = 'BUILD';
       const systemPrompt = await this.config.buildPrompt(ctx);
       ctx.systemPrompt = systemPrompt;
-      const messages = withRuntimeContext(buildSessionMessages(session, this.config.runner.contextBudget), ctx, this.config.channel?.name);
+      const messages = withRuntimeContext(
+        buildSessionMessages(sessionReplayView(session), this.config.runner.contextBudget),
+        ctx,
+        this.config.channel?.name,
+      );
       await this.traceState(ctx, 'BUILD');
 
       // ── RUN ─────────────────────────────────────────────────────────
