@@ -26,7 +26,7 @@ export function createPaperFileTools(): Tool[] {
 
 const listNotesTool: Tool = {
   name: 'list_notes',
-  description: 'List markdown paper notes under output/**/papers/*.md.',
+  description: 'List markdown paper notes under the runtime store: <store>/<runId>/papers/*.md.',
   readOnly: true,
   concurrencySafe: true,
   scopes: ['paper-read'],
@@ -74,7 +74,7 @@ const readNoteTool: Tool = {
 
 const createNoteTool: Tool = {
   name: 'create_note',
-  description: 'Create a markdown note at output/<runId>/papers/<slug>.md. Use only when the user explicitly asks to create/write a note.',
+  description: 'Create a markdown note at <store>/<runId>/papers/<slug>.md. Use only when the user explicitly asks to create/write a note.',
   readOnly: false,
   concurrencySafe: false,
   exclusive: true,
@@ -180,7 +180,7 @@ const appendNoteSectionTool: Tool = {
 
 const updateProfileSectionTool: Tool = {
   name: 'update_profile_section',
-  description: 'Replace or append a markdown section in output/profile.md. Use only when the user explicitly asks to update profile.',
+  description: 'Replace or append a markdown section in <store>/profile.md. Use only when the user explicitly asks to update profile.',
   readOnly: false,
   concurrencySafe: false,
   exclusive: true,
@@ -361,7 +361,7 @@ function guardFromContext(ctx?: ToolContext): WorkspaceGuard {
 async function requireProfilePath(guard: WorkspaceGuard, input = 'profile.md'): Promise<GuardedPath> {
   const resolved = await guard.resolveOutputPath(input);
   if (resolved.path !== resolve(guard.outputDir, 'profile.md')) {
-    throw new Error('profile writes are limited to output/profile.md');
+    throw new Error('profile writes are limited to <store>/profile.md');
   }
   return resolved;
 }
@@ -369,12 +369,12 @@ async function requireProfilePath(guard: WorkspaceGuard, input = 'profile.md'): 
 async function requireNotePath(guard: WorkspaceGuard, input: string): Promise<GuardedPath> {
   const resolved = await guard.resolveOutputPath(input);
   if (!isMarkdown(resolved.path) || !resolved.relativePath.split(sep).includes('papers')) {
-    throw new Error('note writes are limited to output/**/papers/*.md');
+    throw new Error('note writes are limited to <store>/**/papers/*.md');
   }
   const parts = resolved.relativePath.split(sep);
   const papersIdx = parts.lastIndexOf('papers');
   if (papersIdx < 1 || papersIdx !== parts.length - 2) {
-    throw new Error('note path must be output/<run_id>/papers/<slug>.md');
+    throw new Error('note path must be <store>/<run_id>/papers/<slug>.md');
   }
   return resolved;
 }

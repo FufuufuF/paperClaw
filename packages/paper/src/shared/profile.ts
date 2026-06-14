@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 export const PROFILE_SKILLS_DIR = fileURLToPath(new URL('./skills', import.meta.url));
 
 /**
- * Snapshot of `output/profile.md` for the paperClaw business workflow.
+ * Snapshot of `<store>/profile.md` for the paperClaw business workflow.
  */
 export interface ProfileSnapshot {
   /** absolute path that was attempted */
