@@ -126,7 +126,7 @@ export function createReadPaperTool(opts: ReaderToolOpts): Tool {
       type: 'object',
       properties: {
         pdfPath: { type: 'string', description: 'Local PDF path.' },
-        arxivId: { type: 'string', description: 'arXiv id; resolves to output/pdfs/<id>.pdf.' },
+        arxivId: { type: 'string', description: 'arXiv id; resolves to <store>/pdfs/<id>.pdf.' },
         slug: { type: 'string', description: 'Optional note slug.' },
       },
     },
@@ -159,7 +159,7 @@ export function createReadPaperSectionTool(opts: ReaderToolOpts): Tool {
     parameters: {
       type: 'object',
       properties: {
-        statePath: { type: 'string', description: 'Path to output/<runId>/reader-state/<slug>.json.' },
+        statePath: { type: 'string', description: 'Path to <store>/<runId>/reader-state/<slug>.json.' },
         notePath: { type: 'string', description: 'Path to the guided reading markdown note.' },
         slug: { type: 'string', description: 'Paper note slug; resolves to the newest guided reading state.' },
         sectionIndex: { type: 'integer', minimum: 1, description: 'Optional section index. Defaults to first pending section.' },
@@ -202,7 +202,7 @@ export function createRecordPaperSectionNoteTool(opts: ReaderToolOpts): Tool {
     parameters: {
       type: 'object',
       properties: {
-        statePath: { type: 'string', description: 'Path to output/<runId>/reader-state/<slug>.json.' },
+        statePath: { type: 'string', description: 'Path to <store>/<runId>/reader-state/<slug>.json.' },
         notePath: { type: 'string', description: 'Path to the guided reading markdown note.' },
         slug: { type: 'string', description: 'Paper note slug; resolves to the newest guided reading state.' },
         sectionIndex: { type: 'integer', minimum: 1, description: 'Section index to mark done. Defaults to first pending section.' },

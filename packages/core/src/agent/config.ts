@@ -30,6 +30,8 @@ export interface ModelPresetConfig {
 
 export interface AgentDefaultsConfig {
   workspace: string;
+  storeDir: string;
+  /** @deprecated use storeDir. Kept as a compatibility alias for older configs. */
   outputDir: string;
   provider: ProviderName;
   model: string;
@@ -55,7 +57,8 @@ export interface AgentsConfig {
 export const DEFAULT_AGENTS_CONFIG: AgentsConfig = {
   defaults: {
     workspace: '.',
-    outputDir: 'output',
+    storeDir: 'nanobot-store',
+    outputDir: 'nanobot-store',
     provider: 'deepseek',
     model: 'deepseek-chat',
     maxTokens: 8192,
@@ -82,6 +85,7 @@ export function parseAgentsConfig(value: unknown, path = 'agents'): AgentsConfig
 function validateAgentDefaults(defaults: AgentDefaultsConfig, path: string): void {
   asRecord(defaults, path);
   assertString(defaults.workspace, `${path}.workspace`);
+  assertString(defaults.storeDir, `${path}.storeDir`);
   assertString(defaults.outputDir, `${path}.outputDir`);
   assertProviderName(defaults.provider, `${path}.provider`);
   assertString(defaults.model, `${path}.model`);

@@ -16,13 +16,25 @@ import {
  * router 是机制, builtin 是默认命令集.
  */
 
-/** /clear — 清空当前 session.turns */
+/** /clear — 无损开启新空 session；不删除旧 transcript。 */
 export function makeClearCommand(): CommandHandler {
-  return (ctx) => {
-    const fresh = (ctx.createSession ?? createNewSession)(ctx.session.id);
+  return async (ctx) => {
+    const next = await ctx.createSessionId?.('clear');
+    if (next) {
+      const fresh = (ctx.createSession ?? createNewSession)(next.id, {
+        sessionName: next.sessionName,
+        uid: next.uid,
+        channel: next.channel,
+      });
+      return {
+        text: `已开启新空会话: ${next.sessionName ?? next.uid ?? next.id}`,
+        mutatedSession: fresh,
+        switchSessionId: next.id,
+        metadata: { previousTurnCount: ctx.session.turns.length, sessionId: next.id },
+      };
+    }
     return {
-      text: '对话已清空, 重新开始.',
-      mutatedSession: fresh,
+      text: '为了保留完整历史, /clear 不会删除当前 transcript。请使用 /new 开启新会话。',
     };
   };
 }
@@ -199,7 +211,7 @@ export function registerBuiltinCommands(
     getActiveSessionId?: () => string;
   },
 ): void {
-  register(router, { command: '/clear', title: 'Clear', description: '清空当前 session' }, makeClearCommand());
+  register(router, { command: '/clear', title: 'Clear', description: '无损开启新空 session' }, makeClearCommand());
   register(router, { command: '/new', title: 'New Session', description: '开启新会话', argHint: '[name]' }, makeNewCommand());
   register(router, { command: '/help', title: 'Help', description: '查看命令和工具' }, makeHelpCommand({ router, tools: deps.tools }));
   register(router, { command: '/switch', title: 'Switch Session', description: '查看并切换历史 session', argHint: '[number]' }, makeSwitchCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));

@@ -8,7 +8,8 @@ dist/
 build/
 *.tsbuildinfo
 
-# Runtime output (per run / cross-run)
+# Runtime store (per run / cross-run)
+nanobot-store/
 output/
 
 # Env & secrets

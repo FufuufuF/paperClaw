@@ -21,6 +21,7 @@ export { TraceBus, type TraceEvent, type TraceEventKind } from './trace.js';
 export {
   DEFAULT_CONFIG,
   findConfigFile,
+  defaultStoreDir,
   getRepoRoot,
   getRunId,
   loadConfig,
@@ -196,6 +197,35 @@ export {
   ContextBuilder,
 } from './agent/context.js';
 export { SkillsLoader, type SkillEntry, type SkillMetadata } from './agent/skills.js';
+export {
+  AutoCompact,
+  type AutoCompactOpts,
+  type BackgroundScheduler,
+  type PreparedSession,
+} from './agent/autocompact.js';
+export {
+  Consolidator,
+  getSessionCompaction,
+  getLastSessionSummary,
+  sessionReplayView,
+  type ConsolidationResult,
+  type ConsolidatorOpts,
+  type LastSessionSummary,
+  type SessionCompactionMetadata,
+} from './agent/consolidator.js';
+export {
+  MemoryStore,
+  formatTurns,
+  type AppendHistoryOpts,
+  type MemoryHistoryEntry,
+  type MemoryStoreOpts,
+} from './agent/memory.js';
+export {
+  createDreamTools,
+  Dream,
+  type DreamOpts,
+  type DreamRunResult,
+} from './agent/dream.js';
 
 // ─── Templates ──────────────────────────────────────────────────────────
 export { renderTemplate } from './utils/templates.js';
