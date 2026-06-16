@@ -1,5 +1,19 @@
 # AgentLoop 显式状态机改造记录
 
+## 实施状态
+
+已在 `refactor/agentloop-fsm` 分支实施。
+
+当前实现已经把 `AgentLoop.processLocked()` 拆为显式状态机 driver、集中 transition table、独立 state handler 和统一 state trace 记录。
+
+关键落点：
+
+1. `packages/core/src/agent/loop.ts` 增加 `TRANSITIONS`。
+2. `runStateMachine()` 负责循环驱动状态。
+3. `stateRestore()`、`stateCommand()`、`stateBuild()`、`stateRun()`、`stateSave()`、`stateRespond()` 等方法分别承载阶段逻辑。
+4. `TurnContext.trace` 记录每个状态的 event、耗时和异常。
+5. command shortcut 路径仍然是 `COMMAND:shortcut -> DONE`，不会进入 Runner。
+
 ## 背景
 
 当前 paperClaw 的 `packages/core/src/agent/loop.ts` 已经把一轮消息处理拆成了几个阶段：

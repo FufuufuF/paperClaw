@@ -470,6 +470,57 @@ async function testLoopProgressAndErrorPersistence(): Promise<void> {
   });
 }
 
+async function testLoopStateTraceEvents(): Promise<void> {
+  console.log('\n── extra: AgentLoop explicit state trace events ──');
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    h.llm.enqueue({ text: 'state traced', usage: { input: 10, output: 3 } });
+
+    let seenTrace: Array<{ state: string; event: string }> = [];
+    const loop = new AgentLoop({
+      sessionStore: h.sessionStore,
+      commands: h.commands,
+      runner: {
+        tools: h.tools,
+        llm: h.llm,
+        maxIterations: 5,
+        contextBudget: 4000,
+        agentId: 'master',
+      },
+      channel: h.channel,
+      buildPrompt: (ctx) => {
+        seenTrace = ctx?.trace.map((entry) => ({ state: entry.state, event: entry.event })) ?? [];
+        return buildBasePrompt(h.tools);
+      },
+      sessionIdFor: () => 'cli:default',
+    });
+
+    await loop.processMessage({
+      id: 'trace-1',
+      senderId: 'cli:default',
+      text: 'trace normal path',
+      timestamp: Date.now(),
+    });
+
+    assert(
+      JSON.stringify(seenTrace) === JSON.stringify([
+        { state: 'RESTORE', event: 'ok' },
+        { state: 'COMPACT', event: 'ok' },
+        { state: 'COMMAND', event: 'dispatch' },
+      ]),
+      `BUILD sees explicit transition trace (${JSON.stringify(seenTrace)})`,
+    );
+  });
+
+  await withTempDir(async (dir) => {
+    const h = await makeHarness(dir);
+    await h.channel.simulate('/help');
+    const session = await h.sessionStore.load('cli:default');
+    assert(session!.turns.some((turn) => turn.command === '/help'), 'shortcut command still persists command turns');
+    assert(h.llm.receivedMessageRoles.length === 0, 'shortcut command does not enter runner');
+  });
+}
+
 // ─── 主入口 ──────────────────────────────────────────────────────────────
 async function main() {
   await testBasicChat();
@@ -484,6 +535,7 @@ async function main() {
   await testCompactedSessionSummaryReplay();
   await testErrorPaths();
   await testLoopProgressAndErrorPersistence();
+  await testLoopStateTraceEvents();
   console.log('\n✓ 所有 smoke 测试通过.');
 }
 
