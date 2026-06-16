@@ -294,7 +294,7 @@ function dropIllegalToolPrefix(turns: Turn[]): Turn[] {
   return turns.slice(start);
 }
 
-function normalizeSession(value: unknown, fallbackId: string): Session {
+export function normalizeSession(value: unknown, fallbackId: string): Session {
   const raw = value as Partial<Session>;
   const now = new Date().toISOString();
   return {
@@ -345,7 +345,7 @@ function isCompactMetadata(value: unknown): value is NonNullable<SessionMetadata
   );
 }
 
-function previewSession(session: Session): string {
+export function previewSession(session: Session): string {
   const last = [...session.turns]
     .reverse()
     .find((turn) =>

@@ -142,8 +142,26 @@ export {
   FileSessionStore,
   SessionManager,
   createNewSession,
+  normalizeSession,
+  previewSession,
   retainRecentLegalSuffix,
 } from './session/manager.js';
+export { SqliteSessionStore } from './session/sqlite-store.js';
+export {
+  openPaperClawDatabase,
+  closePaperClawDatabase,
+  configureDatabase,
+  jsonOrNull,
+  parseJson,
+  type PaperClawDatabase,
+  type OpenPaperClawDatabaseOpts,
+} from './storage/sqlite.js';
+export {
+  migrateLegacyMemoryHistory,
+  migrateLegacySessions,
+  recordLegacyMigration,
+  type LegacyMigrationResult,
+} from './storage/legacy.js';
 
 // ─── Command ────────────────────────────────────────────────────────────
 export { CommandRouter } from './command/router.js';
@@ -214,12 +232,16 @@ export {
   type SessionCompactionMetadata,
 } from './agent/consolidator.js';
 export {
+  FileMemoryHistoryStore,
   MemoryStore,
+  cleanHistoryContent,
   formatTurns,
   type AppendHistoryOpts,
   type MemoryHistoryEntry,
+  type MemoryHistoryStore,
   type MemoryStoreOpts,
 } from './agent/memory.js';
+export { SqliteMemoryHistoryStore, type SqliteMemoryHistoryStoreOpts } from './agent/sqlite-memory.js';
 export {
   createDreamTools,
   Dream,
