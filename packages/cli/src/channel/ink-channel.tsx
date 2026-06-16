@@ -7,11 +7,12 @@ import type {
   OutboundMessage,
   Session,
   Turn,
+  CommandUiIntent,
 } from '@paperclaw/core';
 import { InkCliApp } from '../ui/ink/App.js';
 import { InkCliStore } from '../ui/ink/store.js';
 import { createSwitchPickerItems } from '../ui/ink/switch-picker.js';
-import { extractToolNames } from '../ui/plain/render.js';
+import { extractToolNames, renderToolSummary } from '../ui/plain/render.js';
 import type { CLIChannelOpts, CliMessageRole } from './types.js';
 
 export class InkCLIChannel implements Channel {
@@ -47,9 +48,15 @@ export class InkCLIChannel implements Channel {
       return;
     }
 
+    const uiIntent = parseUiIntent(msg.metadata?.uiIntent);
+    if (kind === 'final' && uiIntent?.kind === 'session_picker' && this.listSessions) {
+      await this.openSwitchPicker();
+      return;
+    }
+
     if (kind === 'tool_hint') {
       this.store.setRunState('working');
-      this.store.setCurrentTools(extractToolNames(msg));
+      this.store.setCurrentTools(summarizeToolsForUi(msg));
     } else if (kind === 'progress') {
       this.store.setRunState('working');
     } else if (kind === 'error') {
@@ -63,6 +70,10 @@ export class InkCLIChannel implements Channel {
       text: kind === 'tool_hint' ? toolHintText(msg) : msg.text,
       timestamp: Date.now(),
     });
+
+    if (kind === 'final' && uiIntent?.kind === 'restore_session_history') {
+      await this.restoreVisibleSessionHistory(uiIntent.sessionId);
+    }
   }
 
   async start(): Promise<void> {
@@ -109,11 +120,6 @@ export class InkCLIChannel implements Channel {
       await this.requestExit();
       return;
     }
-    if (trimmed === '/switch' && this.listSessions) {
-      await this.openSwitchPicker();
-      return;
-    }
-
     const inbound: InboundMessage = {
       id: `cli-${++this.msgCounter}`,
       senderId: this.senderId,
@@ -162,8 +168,7 @@ export class InkCLIChannel implements Channel {
     const selected = picker?.items[picker.selectedIndex];
     this.store.closeSwitchPicker();
     if (!selected) return;
-    await this.submit(`/switch ${selected.index}`);
-    await this.restoreVisibleSessionHistory(selected.id);
+    await this.submit(`/session ${selected.index}`);
   }
 
   private cancelSwitchPicker(): void {
@@ -267,8 +272,26 @@ function roleFor(kind: NonNullable<OutboundMessage['kind']>): CliMessageRole {
 }
 
 function toolHintText(msg: OutboundMessage): string {
-  const tools = extractToolNames(msg);
-  return tools.length > 0 ? tools.join(', ') : msg.text;
+  return renderToolSummary(extractToolNames(msg)) || msg.text;
+}
+
+function summarizeToolsForUi(msg: OutboundMessage): string[] {
+  const summary = renderToolSummary(extractToolNames(msg));
+  return summary ? [summary] : [];
+}
+
+function parseUiIntent(value: unknown): CommandUiIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const intent = value as { kind?: unknown; sessionId?: unknown };
+  if (intent.kind === 'session_picker') return { kind: 'session_picker' };
+  if (
+    intent.kind === 'restore_session_history' &&
+    typeof intent.sessionId === 'string' &&
+    intent.sessionId.length > 0
+  ) {
+    return { kind: 'restore_session_history', sessionId: intent.sessionId };
+  }
+  return undefined;
 }
 
 function isVisibleTurn(turn: Turn): boolean {

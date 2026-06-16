@@ -1,6 +1,8 @@
 import {
   extractToolNames,
   renderPlainMessage,
+  renderPlainMarkdown,
+  renderToolSummary,
   renderPlainWelcome,
 } from '../../packages/cli/src/ui/plain/render.js';
 import {
@@ -75,6 +77,22 @@ function testPlainRendering(): void {
 
   const error = renderPlainMessage({ kind: 'error', text: '失败' });
   assert(error.startsWith('error:'), 'error message keeps error prefix');
+
+  const markdown = renderPlainMarkdown([
+    '## Heading',
+    '',
+    '- read `section`',
+    '',
+    '> quoted',
+    '',
+    '```ts',
+    'const value = 1;',
+    '```',
+  ].join('\n'));
+  assert(markdown.includes('Heading'), 'plain markdown renders headings');
+  assert(markdown.includes('read'), 'plain markdown renders lists');
+  assert(markdown.includes('quoted'), 'plain markdown renders blockquotes');
+  assert(markdown.includes('const value = 1;'), 'plain markdown preserves code block content');
 }
 
 function testToolExtraction(): void {
@@ -90,6 +108,25 @@ function testToolExtraction(): void {
     text: '正在调用工具: search_arxiv, triage_papers',
   });
   assert(fromText.join(',') === 'search_arxiv,triage_papers', 'tool names can be parsed from text');
+
+  const summary = renderToolSummary([
+    'read_paper_section',
+    'preview_section_relations',
+    'kg_get_node',
+    'kg_get_node',
+    'kg_get_node',
+  ]);
+  assert(
+    summary === 'Reading paper section -> Finding related papers -> Loading related paper metadata × 3',
+    `tool summary aggregates duplicate tools (${summary})`,
+  );
+
+  const renderedTool = renderPlainMessage({
+    kind: 'tool_hint',
+    text: '正在调用工具: ignored',
+    metadata: { tools: ['kg_get_node', 'kg_get_node'] },
+  });
+  assert(renderedTool.includes('Loading related paper metadata × 2'), 'plain tool rendering is compact');
 }
 
 function testSwitchPickerItems(): void {

@@ -66,50 +66,16 @@ export function makeSwitchCommand(opts: {
   getActiveSessionId?: () => string;
 }): CommandHandler {
   return async (ctx) => {
-    const list = await opts.sessionStore.list();
-    const activeId = opts.getActiveSessionId?.() ?? ctx.session.id;
-    const target = ctx.args.trim();
-    if (!target) {
-      return { text: renderSwitchList(list, activeId) };
-    }
-
-    if (!/^\d+$/.test(target)) {
-      return {
-        text: [
-          `无法识别的 session 序号: ${target}`,
-          '',
-          renderSwitchList(list, activeId),
-        ].join('\n'),
-      };
-    }
-
-    const index = Number(target);
-    const selected = list[index - 1];
-    if (!selected) {
-      return {
-        text: [
-          `session 序号 ${index} 不存在。`,
-          '',
-          renderSwitchList(list, activeId),
-        ].join('\n'),
-      };
-    }
-
-    if (selected.id === activeId) {
-      return { text: `已在当前 session: ${sessionDisplayName(selected)}` };
-    }
-
-    return {
-      text: `已切换到 session: ${sessionDisplayName(selected)}`,
-      switchSessionId: selected.id,
-      metadata: { sessionId: selected.id },
-    };
+    return await runSessionSwitchCommand(ctx.args, opts, { openPicker: false, fallbackActiveId: ctx.session.id });
   };
 }
 
 /** /history — /switch 的兼容别名 */
-export function makeHistoryCommand(opts: { sessionStore: SessionStore }): CommandHandler {
-  return makeSwitchCommand({ sessionStore: opts.sessionStore });
+export function makeHistoryCommand(opts: {
+  sessionStore: SessionStore;
+  getActiveSessionId?: () => string;
+}): CommandHandler {
+  return makeSwitchCommand(opts);
 }
 
 /** /cost — 当前 session 的 token 消耗 */
@@ -121,11 +87,13 @@ export function makeCostCommand(): CommandHandler {
   };
 }
 
-/** /session — 当前 session id 和 turn 数 */
-export function makeSessionCommand(): CommandHandler {
-  return (ctx) => {
-    const text = `当前 session: ${ctx.session.id} | turns: ${ctx.session.turns.length} | createdAt: ${ctx.session.metadata.createdAt}`;
-    return { text };
+/** /session — 会话列表与切换主入口 */
+export function makeSessionCommand(opts: {
+  sessionStore: SessionStore;
+  getActiveSessionId?: () => string;
+}): CommandHandler {
+  return async (ctx) => {
+    return await runSessionSwitchCommand(ctx.args, opts, { openPicker: true, fallbackActiveId: ctx.session.id });
   };
 }
 
@@ -214,10 +182,10 @@ export function registerBuiltinCommands(
   register(router, { command: '/clear', title: 'Clear', description: '无损开启新空 session' }, makeClearCommand());
   register(router, { command: '/new', title: 'New Session', description: '开启新会话', argHint: '[name]' }, makeNewCommand());
   register(router, { command: '/help', title: 'Help', description: '查看命令和工具' }, makeHelpCommand({ router, tools: deps.tools }));
-  register(router, { command: '/switch', title: 'Switch Session', description: '查看并切换历史 session', argHint: '[number]' }, makeSwitchCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));
-  register(router, { command: '/history', title: 'History', description: '查看历史 session (/switch 的别名)' }, makeHistoryCommand({ sessionStore: deps.sessionStore }));
+  register(router, { command: '/switch', title: 'Switch Session', description: '兼容别名: 同 /session', argHint: '[number|id]' }, makeSwitchCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));
+  register(router, { command: '/history', title: 'History', description: '兼容别名: 同 /session' }, makeHistoryCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));
   register(router, { command: '/cost', title: 'Cost', description: '查看当前 session token 消耗' }, makeCostCommand());
-  register(router, { command: '/session', title: 'Session', description: '查看当前 session' }, makeSessionCommand());
+  register(router, { command: '/session', title: 'Session', description: '恢复或切换 session', argHint: '[number|id]' }, makeSessionCommand({ sessionStore: deps.sessionStore, getActiveSessionId: deps.getActiveSessionId }));
   register(router, { command: '/status', title: 'Status', description: '查看 provider/model/session/profile/tools 状态' }, makeStatusCommand({ tools: deps.tools }));
   register(router, { command: '/model', title: 'Model', description: '查看当前模型', argHint: '[preset]' }, makeModelCommand());
   register(router, { command: '/stop', title: 'Stop', description: '请求停止当前任务' }, makeStopCommand());
@@ -225,6 +193,50 @@ export function registerBuiltinCommands(
 
 function register(router: CommandRouter, metadata: CommandMetadata, handler: CommandHandler): void {
   router.register(metadata, handler);
+}
+
+async function runSessionSwitchCommand(
+  args: string,
+  opts: {
+    sessionStore: SessionStore;
+    getActiveSessionId?: () => string;
+  },
+  behavior: { openPicker: boolean; fallbackActiveId: string },
+) {
+  const list = await opts.sessionStore.list();
+  const activeId = opts.getActiveSessionId?.() ?? behavior.fallbackActiveId;
+  const target = args.trim();
+  if (!target) {
+    return {
+      text: renderSwitchList(list, activeId),
+      ...(behavior.openPicker ? { uiIntent: { kind: 'session_picker' as const } } : {}),
+    };
+  }
+
+  const selected = resolveSessionTarget(list, target);
+  if (!selected) {
+    const message = /^\d+$/.test(target)
+      ? `session 序号 ${Number(target)} 不存在。`
+      : `session id 不存在: ${target}`;
+    return {
+      text: [
+        message,
+        '',
+        renderSwitchList(list, activeId),
+      ].join('\n'),
+    };
+  }
+
+  if (activeId && selected.id === activeId) {
+    return { text: `已在当前 session: ${sessionDisplayName(selected)}` };
+  }
+
+  return {
+    text: `已切换到 session: ${sessionDisplayName(selected)}`,
+    switchSessionId: selected.id,
+    uiIntent: { kind: 'restore_session_history' as const, sessionId: selected.id },
+    metadata: { sessionId: selected.id },
+  };
 }
 
 function providerFromId(id?: string): string | undefined {
@@ -236,7 +248,7 @@ function modelFromId(id?: string): string | undefined {
   return parts && parts.length > 1 ? parts.slice(1).join('/') : undefined;
 }
 
-function renderSwitchList(list: SessionListing[], activeId: string): string {
+function renderSwitchList(list: SessionListing[], activeId?: string): string {
   if (list.length === 0) return '暂无可切换 session。';
   const lines = ['可切换 sessions:'];
   list.forEach((session, idx) => {
@@ -245,8 +257,15 @@ function renderSwitchList(list: SessionListing[], activeId: string): string {
     lines.push(`${marker} ${idx + 1}. ${sessionDisplayName(session)}  ${session.turnCount} turns  last: ${session.lastActiveAt || 'unknown'}`);
     lines.push(`     ${preview}`);
   });
-  lines.push('', '输入 /switch <number> 切换到对应会话。');
+  lines.push('', '输入 /session <number> 或 /session <id> 切换到对应会话。');
   return lines.join('\n');
+}
+
+function resolveSessionTarget(list: SessionListing[], target: string): SessionListing | undefined {
+  if (/^\d+$/.test(target)) {
+    return list[Number(target) - 1];
+  }
+  return list.find((session) => session.id === target || session.uid === target);
 }
 
 function sessionDisplayName(session: SessionListing): string {

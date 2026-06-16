@@ -5,6 +5,9 @@ import type {
   InboundHandler,
   InboundMessage,
   OutboundMessage,
+  Session,
+  Turn,
+  CommandUiIntent,
 } from '@paperclaw/core';
 import { renderPlainMessage, renderPlainWelcome } from '../ui/plain/render.js';
 import type { CLIChannelOpts } from './types.js';
@@ -20,10 +23,12 @@ export class PlainCLIChannel implements Channel {
   private msgCounter = 0;
   private readonly senderId: string;
   private readonly getStatus?: CLIChannelOpts['getStatus'];
+  private readonly loadSession?: CLIChannelOpts['loadSession'];
 
   constructor(opts: CLIChannelOpts = {}) {
     this.senderId = opts.senderId ?? 'cli:default';
     this.getStatus = opts.getStatus;
+    this.loadSession = opts.loadSession;
   }
 
   onMessage(handler: InboundHandler): void {
@@ -33,6 +38,11 @@ export class PlainCLIChannel implements Channel {
   async send(msg: OutboundMessage): Promise<void> {
     const output = renderPlainMessage(msg);
     if (output) stdout.write(output);
+    const uiIntent = parseUiIntent(msg.metadata?.uiIntent);
+    if (uiIntent?.kind === 'restore_session_history') {
+      const restored = await this.renderRestoredHistory(uiIntent.sessionId);
+      if (restored) stdout.write(restored);
+    }
   }
 
   async start(): Promise<void> {
@@ -99,4 +109,44 @@ export class PlainCLIChannel implements Channel {
       return undefined;
     }
   }
+
+  private async renderRestoredHistory(sessionId: string): Promise<string> {
+    if (!this.loadSession) return '';
+    const session = await this.loadSession(sessionId);
+    if (!session) return '';
+    const turns = session.turns.filter(isVisibleTurn).slice(-12);
+    const lines = [`history: 已恢复 session: ${displaySessionName(session)}`];
+    for (const turn of turns) {
+      const prefix = turn.role === 'user' ? 'you' : 'clawbot';
+      const text = turn.content.replace(/\n+/g, '\n');
+      const split = text.split('\n');
+      const pad = ' '.repeat(prefix.length);
+      split.forEach((line, idx) => {
+        lines.push(idx === 0 ? `${prefix}: ${line}` : `${pad}  ${line}`);
+      });
+    }
+    return lines.join('\n') + '\n';
+  }
+}
+
+function parseUiIntent(value: unknown): CommandUiIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const intent = value as { kind?: unknown; sessionId?: unknown };
+  if (intent.kind === 'session_picker') return { kind: 'session_picker' };
+  if (intent.kind === 'restore_session_history' && typeof intent.sessionId === 'string') {
+    return { kind: 'restore_session_history', sessionId: intent.sessionId };
+  }
+  return undefined;
+}
+
+function isVisibleTurn(turn: Turn): boolean {
+  return (
+    (turn.role === 'user' || turn.role === 'assistant') &&
+    !turn.command &&
+    !turn.content.trim().startsWith('/')
+  );
+}
+
+function displaySessionName(session: Session): string {
+  return session.metadata.sessionName || session.id;
 }

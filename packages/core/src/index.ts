@@ -171,6 +171,7 @@ export type {
   CommandMetadata,
   CommandResult,
   CommandRuntimeStatus,
+  CommandUiIntent,
 } from './command/router.js';
 export {
   registerBuiltinCommands,

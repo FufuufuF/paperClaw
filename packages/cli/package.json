@@ -10,6 +10,8 @@
     "@paperclaw/core": "workspace:*",
     "@paperclaw/paper": "workspace:*",
     "ink": "^7.0.5",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.0",
     "nanoid": "^5.0.9",
     "react": "^19.2.7"
   },

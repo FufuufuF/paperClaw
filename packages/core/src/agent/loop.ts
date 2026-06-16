@@ -202,7 +202,10 @@ export class AgentLoop {
         if (cmdResult.switchSessionId) {
           await this.config.switchSession?.(cmdResult.switchSessionId);
         }
-        await this.send({ kind: 'final', text: cmdResult.text, replyTo: inbound.id, metadata: cmdResult.metadata });
+        const metadata = cmdResult.uiIntent
+          ? { ...cmdResult.metadata, uiIntent: cmdResult.uiIntent }
+          : cmdResult.metadata;
+        await this.send({ kind: 'final', text: cmdResult.text, replyTo: inbound.id, metadata });
 
         await this.config.trace?.emit('loop', 'phase_end', {
           phase_name: 'COMMAND',

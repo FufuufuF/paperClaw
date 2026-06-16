@@ -27,6 +27,10 @@ export interface CommandRuntimeStatus {
   papers?: Array<{ id: string; title?: string; path?: string; createdAt?: string }>;
 }
 
+export type CommandUiIntent =
+  | { kind: 'session_picker' }
+  | { kind: 'restore_session_history'; sessionId: string };
+
 export interface CommandContext {
   session: Session;
   args: string;
@@ -63,6 +67,8 @@ export interface CommandResult {
   mutatedSession?: Session;
   /** 若命令要求切换后续消息到另一个 session, 返回目标 session id. */
   switchSessionId?: string;
+  /** 给 rich UI channel 的稳定交互意图, e.g. 打开 session picker 或恢复历史。 */
+  uiIntent?: CommandUiIntent;
   metadata?: Record<string, unknown>;
 }
 

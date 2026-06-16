@@ -256,8 +256,20 @@ async function testNewSessionAndSwitchCommand(): Promise<void> {
     assert(listText.includes('agent memory ABCDEFGHIJ'), '/switch shows session name and uid');
     assert(listText.includes('old topic reply'), '/switch preview skips command turns and shows last useful message');
 
+    await h.channel.simulate('/session');
+    assert(h.channel.lastText().includes('可切换 sessions:'), '/session lists sessions');
+    assert(
+      h.channel.sent.at(-1)?.metadata?.uiIntent &&
+      (h.channel.sent.at(-1)?.metadata?.uiIntent as { kind?: string }).kind === 'session_picker',
+      '/session emits picker UI intent',
+    );
+
     await h.channel.simulate('/switch 2');
     assert(activeSessionId === 'cli:default', '/switch <number> switches without requiring full session id');
+    assert(
+      (h.channel.sent.at(-1)?.metadata?.uiIntent as { kind?: string; sessionId?: string })?.kind === 'restore_session_history',
+      '/switch emits restore history UI intent',
+    );
 
     h.llm.enqueue({ text: 'back on default', usage: { input: 10, output: 3 } });
     await h.channel.simulate('back');
