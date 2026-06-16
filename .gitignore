@@ -11,6 +11,9 @@ build/
 # Runtime store (per run / cross-run)
 nanobot-store/
 output/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Env & secrets
 .env

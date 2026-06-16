@@ -14,10 +14,16 @@ import {
   defaultStoreDir,
   Dream,
   FeishuChannel,
-  FileSessionStore,
+  closePaperClawDatabase,
   loadEnv,
   MemoryStore,
+  migrateLegacyMemoryHistory,
+  migrateLegacySessions,
+  openPaperClawDatabase,
+  SqliteMemoryHistoryStore,
+  SqliteSessionStore,
   SessionManager,
+  type SessionStore,
   type CommandRuntimeStatus,
   registerBuiltinCommands,
   ToolRegistry,
@@ -61,16 +67,27 @@ async function main() {
   await migrateLegacyOutputDir(repoRoot, storeDir, explicitStoreDir === undefined);
   const outputDir = storeDir;
   const sessionsDir = resolve(storeDir, 'sessions');
+  const dbPath = resolveDbPath(repoRoot, storeDir);
   const tracePath = resolve(storeDir, 'chat-trace.jsonl');
   const profilePath = resolve(storeDir, 'profile.md');
   const cronStatePath = resolve(storeDir, 'cron-state.json');
 
   // ── Infra ──────────────────────────────────────────────────────────
+  const db = await openPaperClawDatabase(dbPath);
+  let dbClosed = false;
+  const closeDb = () => {
+    if (dbClosed) return;
+    closePaperClawDatabase(db);
+    dbClosed = true;
+  };
   const llm = createLLMClient(); // 默认 deepseek-chat
   const trace = new TraceBus(tracePath, 'master');
-  const sessionStore = new FileSessionStore(sessionsDir);
+  const sessionStore = new SqliteSessionStore(db);
+  await migrateLegacySessions({ db, sessionsDir, store: sessionStore });
   const sessionManager = new SessionManager(sessionStore);
-  const memoryStore = new MemoryStore(storeDir);
+  const memoryHistoryStore = new SqliteMemoryHistoryStore(db);
+  await migrateLegacyMemoryHistory({ db, memoryDir: resolve(storeDir, 'memory') });
+  const memoryStore = new MemoryStore(storeDir, { historyStore: memoryHistoryStore });
   const consolidator = new Consolidator({ store: memoryStore, llm, sessions: sessionManager });
   const autoCompact = new AutoCompact({
     sessions: sessionManager,
@@ -232,10 +249,17 @@ async function main() {
   process.on('SIGINT', () => {
     autoCompact.stop();
     cronService.stop();
-    void channel.stop().finally(() => process.exit(0));
+    void channel.stop().finally(() => {
+      closeDb();
+      process.exit(0);
+    });
   });
 
-  await channel.start();
+  try {
+    await channel.start();
+  } finally {
+    closeDb();
+  }
 }
 
 const DREAM_TASK_ID = 'dream-memory';
@@ -256,6 +280,11 @@ function resolveStoreDir(repoRoot: string): string {
   return configured ? resolve(repoRoot, configured) : defaultStoreDir(repoRoot);
 }
 
+function resolveDbPath(repoRoot: string, storeDir: string): string {
+  const configured = process.env.PAPERCLAW_DB_PATH;
+  return configured ? resolve(repoRoot, configured) : resolve(storeDir, 'paperclaw.sqlite');
+}
+
 async function migrateLegacyOutputDir(repoRoot: string, storeDir: string, enabled: boolean): Promise<void> {
   if (!enabled) return;
   const legacy = resolve(repoRoot, 'output');
@@ -272,8 +301,8 @@ async function migrateLegacyOutputDir(repoRoot: string, storeDir: string, enable
 function createChannelFromEnv(
   getStatus: () => CommandRuntimeStatus | Promise<CommandRuntimeStatus>,
   sessionUi?: {
-    listSessions?: () => ReturnType<FileSessionStore['list']>;
-    loadSession?: (id: string) => ReturnType<FileSessionStore['load']>;
+    listSessions?: () => ReturnType<SessionStore['list']>;
+    loadSession?: (id: string) => ReturnType<SessionStore['load']>;
     getActiveSessionId?: () => string;
   },
 ): Channel {

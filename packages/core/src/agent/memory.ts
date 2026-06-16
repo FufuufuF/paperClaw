@@ -14,6 +14,15 @@ export interface AppendHistoryOpts {
 
 export interface MemoryStoreOpts {
   maxHistoryEntries?: number;
+  historyStore?: MemoryHistoryStore;
+}
+
+export interface MemoryHistoryStore {
+  appendHistory(entry: string, opts?: AppendHistoryOpts): Promise<number>;
+  readUnprocessedHistory(sinceCursor: number): Promise<MemoryHistoryEntry[]>;
+  compactHistory(): Promise<void>;
+  getLastDreamCursor(): Promise<number>;
+  setLastDreamCursor(cursor: number): Promise<void>;
 }
 
 const DEFAULT_MAX_HISTORY_ENTRIES = 1000;
@@ -24,21 +33,19 @@ export class MemoryStore {
   private readonly maxHistoryEntries: number;
   private readonly memoryDir: string;
   private readonly memoryFile: string;
-  private readonly historyFile: string;
-  private readonly cursorFile: string;
-  private readonly dreamCursorFile: string;
   private readonly soulFile: string;
   private readonly userFile: string;
+  private readonly history: MemoryHistoryStore;
 
   constructor(storeDir: string, opts: MemoryStoreOpts = {}) {
     this.maxHistoryEntries = opts.maxHistoryEntries ?? DEFAULT_MAX_HISTORY_ENTRIES;
     this.memoryDir = resolve(storeDir, 'memory');
     this.memoryFile = resolve(this.memoryDir, 'MEMORY.md');
-    this.historyFile = resolve(this.memoryDir, 'history.jsonl');
-    this.cursorFile = resolve(this.memoryDir, '.cursor');
-    this.dreamCursorFile = resolve(this.memoryDir, '.dream_cursor');
     this.soulFile = resolve(storeDir, 'SOUL.md');
     this.userFile = resolve(storeDir, 'USER.md');
+    this.history = opts.historyStore ?? new FileMemoryHistoryStore(this.memoryDir, {
+      maxHistoryEntries: this.maxHistoryEntries,
+    });
   }
 
   async readMemory(): Promise<string> {
@@ -71,10 +78,50 @@ export class MemoryStore {
   }
 
   async appendHistory(entry: string, opts: AppendHistoryOpts = {}): Promise<number> {
+    return await this.history.appendHistory(entry, opts);
+  }
+
+  async readUnprocessedHistory(sinceCursor: number): Promise<MemoryHistoryEntry[]> {
+    return await this.history.readUnprocessedHistory(sinceCursor);
+  }
+
+  async compactHistory(): Promise<void> {
+    await this.history.compactHistory();
+  }
+
+  async getLastDreamCursor(): Promise<number> {
+    return await this.history.getLastDreamCursor();
+  }
+
+  async setLastDreamCursor(cursor: number): Promise<void> {
+    await this.history.setLastDreamCursor(cursor);
+  }
+
+  async rawArchive(turns: Turn[], opts: AppendHistoryOpts = {}): Promise<number> {
+    const limit = opts.maxChars ?? DEFAULT_RAW_ARCHIVE_MAX_CHARS;
+    const formatted = formatTurns(turns).slice(0, limit);
+    return await this.appendHistory(`[RAW] ${turns.length} turns\n${formatted}`, { maxChars: limit + 128 });
+  }
+}
+
+export class FileMemoryHistoryStore implements MemoryHistoryStore {
+  private readonly maxHistoryEntries: number;
+  private readonly historyFile: string;
+  private readonly cursorFile: string;
+  private readonly dreamCursorFile: string;
+
+  constructor(private readonly memoryDir: string, opts: MemoryStoreOpts = {}) {
+    this.maxHistoryEntries = opts.maxHistoryEntries ?? DEFAULT_MAX_HISTORY_ENTRIES;
+    this.historyFile = resolve(this.memoryDir, 'history.jsonl');
+    this.cursorFile = resolve(this.memoryDir, '.cursor');
+    this.dreamCursorFile = resolve(this.memoryDir, '.dream_cursor');
+  }
+
+  async appendHistory(entry: string, opts: AppendHistoryOpts = {}): Promise<number> {
     await fs.mkdir(this.memoryDir, { recursive: true });
     const cursor = await this.nextCursor();
     const limit = opts.maxChars ?? DEFAULT_HISTORY_ENTRY_MAX_CHARS;
-    const content = stripThink(entry.trimEnd()).slice(0, limit);
+    const content = cleanHistoryContent(entry, limit);
     const record: MemoryHistoryEntry = {
       cursor,
       timestamp: new Date().toISOString(),
@@ -104,12 +151,6 @@ export class MemoryStore {
 
   async setLastDreamCursor(cursor: number): Promise<void> {
     await writeFileEnsured(this.dreamCursorFile, String(cursor));
-  }
-
-  async rawArchive(turns: Turn[], opts: AppendHistoryOpts = {}): Promise<number> {
-    const limit = opts.maxChars ?? DEFAULT_RAW_ARCHIVE_MAX_CHARS;
-    const formatted = formatTurns(turns).slice(0, limit);
-    return await this.appendHistory(`[RAW] ${turns.length} turns\n${formatted}`, { maxChars: limit + 128 });
   }
 
   private async nextCursor(): Promise<number> {
@@ -142,6 +183,10 @@ export class MemoryStore {
     await fs.writeFile(tmp, content ? `${content}\n` : '', 'utf8');
     await fs.rename(tmp, this.historyFile);
   }
+}
+
+export function cleanHistoryContent(entry: string, maxChars = DEFAULT_HISTORY_ENTRY_MAX_CHARS): string {
+  return stripThink(entry.trimEnd()).slice(0, maxChars);
 }
 
 export function formatTurns(turns: Turn[]): string {
