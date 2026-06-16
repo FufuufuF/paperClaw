@@ -59,6 +59,8 @@ async function testReadPaperStartsGuidedReading(): Promise<void> {
     assert(data.nextSection?.index === 1, 'next section starts at first section');
     assert(data.profileUpdated === false, 'profile is not updated before guided reading completes');
     assert(llm.receivedMessages.length === 0, 'read_paper does not summarize whole paper immediately');
+    assert(data.nextAction.includes('immediately call read_paper_section'), 'read_paper tells agent to start reading when requested');
+    assert(data.nextAction.includes('Do not replace guided reading'), 'read_paper forbids outline-only substitute');
 
     const note = await readFile(data.notePath, 'utf8');
     assert(note.includes('source_pdf:'), 'note contains source pdf');
@@ -125,6 +127,14 @@ async function testReadPaperSectionLoadsContentOnly(): Promise<void> {
     const data = section.data as ReadPaperSectionResult;
     assert(data.section.index === 1, 'first section read');
     assert(data.section.text.includes('tool failures and recovery protocols'), 'section text is returned to main agent');
+    assert(data.teaching.mode === 'guided_reading', 'section returns guided teaching plan');
+    assert(data.teaching.currentStep === 'teach_first_block', 'section teaching starts at first block');
+    assert(data.teaching.firstBlock.text.includes('tool failures and recovery protocols'), 'first teaching block is grounded in section text');
+    assert(data.teaching.responseContract.some((item) => item.includes('plain language')), 'teaching plan requires plain-language explanation');
+    assert(data.teaching.forbidden.some((item) => item.includes('only a title')), 'teaching plan forbids shallow outline');
+    assert(data.relationPreviewInstruction.includes('call preview_section_relations'), 'section requires relation preview before answer');
+    assert(data.relationPreviewInstruction.includes('1-2'), 'relation preview limits old papers used in teaching');
+    assert(data.noteInstruction.includes('Do not summarize the whole section'), 'note instruction blocks short section summaries');
     assert(data.completed === false, 'one section does not complete multi-section paper');
     assert(data.nextSection?.index === 2, 'next section is exposed');
 

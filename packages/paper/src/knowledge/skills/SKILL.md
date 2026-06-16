@@ -25,6 +25,8 @@ paperClaw 的长期知识分两层:
 - `read_paper` 启动 guided reading 后会自动注册论文节点, 不需要主 agent 再重复写节点。
 - `record_paper_section_note` 沉淀章节笔记后会更新阅读进度；完整读完后会触发 consolidation，更新 `summary_short` / `key_terms` 并自动建边。
 - 普通进入新 section 时只用 `preview_section_relations` 做只读关联预览，不写图谱。
+- section 精读中, 关联论文只作为解释当前小块的类比、证据或反例; 不要把 `preview_section_relations` 的结果全部展开成论文清单。
+- 如果需要补充旧论文 metadata, 只读取当前解释真正需要的 1-3 个节点; 不要为了展示图谱数量连续读取所有候选节点。
 - 如果用户明确说“把这两篇的关系记下来 / 写入知识库”, 可以调用 `kg_upsert_link`。
 - 不再使用 pending link review 流程。
 
@@ -33,6 +35,7 @@ paperClaw 的长期知识分两层:
 - 用户问“这和以前读过的有什么关系 / 有什么不同 / 能不能比较”时, 先用 `preview_section_relations` 或 `kg_neighbors`。
 - 当前进入一个新 section 时，可以用 `preview_section_relations` 做只读候选检索。
 - `preview_section_relations` 是只读工具，不会写入节点或关系。
+- 对 guided reading, 关系发现结果应自然嵌入当前小块解释, 而不是作为 bibliography 或排名列表单独输出。
 - 不要每轮对话都做 LLM rerank 或 sub-agent consolidation。
 - 整篇论文读完, 或用户要求“整理这篇和之前论文的关系 / 总结入库 / 更新知识库”时, 再调用 `consolidate_paper`。
 

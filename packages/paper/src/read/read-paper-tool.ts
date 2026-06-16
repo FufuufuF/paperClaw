@@ -60,10 +60,20 @@ export interface ReadPaperSectionResult {
   notePath: string;
   statePath: string;
   section: { index: number; title: string; chars: number; status: ReadingSectionStatus; text: string };
+  teaching: GuidedTeachingPlan;
+  relationPreviewInstruction: string;
   completed: boolean;
   previousSection?: { index: number; title: string; chars: number };
   nextSection?: { index: number; title: string; chars: number };
   noteInstruction: string;
+}
+
+export interface GuidedTeachingPlan {
+  mode: 'guided_reading';
+  currentStep: 'teach_first_block';
+  firstBlock: { title: string; text: string; chars: number };
+  responseContract: string[];
+  forbidden: string[];
 }
 
 export interface RecordPaperSectionNoteInput extends ReadPaperSectionInput {
@@ -188,7 +198,7 @@ export function createReadPaperSectionTool(opts: ReaderToolOpts): Tool {
 export function createRecordPaperSectionNoteTool(opts: ReaderToolOpts): Tool {
   return {
     name: 'record_paper_section_note',
-    description: 'Persist the main agent generated note for one guided-reading section, mark it done in reader-state, and update the reading plan. Use after discussing a section with the user.',
+    description: 'Persist the main agent generated note for one guided-reading section, mark it done in reader-state, and update the reading plan. Call this only when the most recent user message explicitly asks to save/record/沉淀/写入 the section note. Do not call it when the user answers a comprehension check, says 继续, or asks to read the next block/section.',
     readOnly: false,
     concurrencySafe: false,
     exclusive: true,
@@ -197,7 +207,7 @@ export function createRecordPaperSectionNoteTool(opts: ReaderToolOpts): Tool {
       required: true,
       action: 'record a paper section note and update reading progress',
       patterns: ['记录', '沉淀', '写入', '保存', '更新\\s*(笔记|note|阅读进度)', 'mark\\s*(done|read)', 'record\\s*(note|section)', 'save\\s*(note|section)'],
-      guidance: 'Ask the user to explicitly confirm before recording the section note.',
+      guidance: 'Ask the user to explicitly confirm before recording the section note. A comprehension-check answer such as "1" or "2", or a request to continue reading, is not confirmation.',
     },
     parameters: {
       type: 'object',
@@ -313,7 +323,11 @@ export async function readPaper(
     sections: publicSections(state),
     nextSection: nextSection ? publicSection(nextSection) : undefined,
     nextAction: nextSection
-      ? `Ask the user whether to read section ${nextSection.index}: ${nextSection.title}. When the user wants to start or continue, call read_paper_section.`
+      ? [
+          `If the user asked to read or 精读 the paper, immediately call read_paper_section for section ${nextSection.index}: ${nextSection.title}.`,
+          'Do not replace guided reading with a section list or a short outline.',
+          'Only ask before loading the section if the user merely asked to set up a note scaffold.',
+        ].join(' ')
       : 'No readable sections were found.',
     knowledgeNode: { id: slug, status: 'reading', notePath },
     usage: { input: 0, output: 0 },
@@ -354,10 +368,23 @@ export async function readPaperSection(
     notePath: state.notePath,
     statePath,
     section: publicSectionWithText(section),
+    teaching: buildGuidedTeachingPlan(section),
+    relationPreviewInstruction: [
+      'Before answering the user, call preview_section_relations with this statePath and sectionIndex.',
+      'Use maxResults=3.',
+      'If it returns related papers, weave only 1-2 of them into the teaching as analogy, contrast, or evidence for teaching.firstBlock.',
+      'If it returns no results, say nothing about graph coverage and proceed with teaching.firstBlock.',
+      'Do not list related papers as a bibliography.',
+    ].join(' '),
     completed: state.completed,
     previousSection: previousSection ? publicSection(previousSection) : undefined,
     nextSection: nextSection ? publicSection(nextSection) : undefined,
-    noteInstruction: `Discuss section ${section.index} with the user. When the user confirms the section note should be saved, call record_paper_section_note with sectionIndex=${section.index}.`,
+    noteInstruction: [
+      `Teach section ${section.index} with the user, starting from teaching.firstBlock.`,
+      'Do not summarize the whole section as a short outline.',
+      'Do not advance to the next section in this answer.',
+      `When the user confirms the section note should be saved, call record_paper_section_note with sectionIndex=${section.index}.`,
+    ].join(' '),
   };
 }
 
@@ -772,6 +799,52 @@ function publicSectionWithText(section: GuidedReadingSection): ReadPaperSectionR
     status: section.status,
     text: section.text,
   };
+}
+
+function buildGuidedTeachingPlan(section: GuidedReadingSection): GuidedTeachingPlan {
+  const firstBlockText = firstTeachingBlock(section.text);
+  return {
+    mode: 'guided_reading',
+    currentStep: 'teach_first_block',
+    firstBlock: {
+      title: `Section ${section.index} first teaching block`,
+      text: firstBlockText,
+      chars: firstBlockText.length,
+    },
+    responseContract: [
+      'Start with one sentence that positions what this section is trying to do.',
+      'Then teach only teaching.firstBlock, not the entire section.',
+      'Use plain language first, then map it back to the paper terms.',
+      'Include one concrete example or mental model grounded in this section.',
+      'Name one likely confusion a reader may have and resolve it.',
+      'Use several short paragraphs; bullets are allowed only after the explanation.',
+      'End with a comprehension check and ask whether to continue to the next block, retry with an example, or save a note.',
+    ],
+    forbidden: [
+      'Do not output only a title, quote, and bullet list.',
+      'Do not ask to continue to the next section before teaching the current block.',
+      'Do not list every related paper or every section heading.',
+      'Do not write a report-style full-section summary unless the user explicitly asks for one.',
+    ],
+  };
+}
+
+function firstTeachingBlock(text: string): string {
+  const paragraphs = text
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  let chars = 0;
+  for (const paragraph of paragraphs.length > 0 ? paragraphs : text.split('\n').map((line) => line.trim()).filter(Boolean)) {
+    if (out.length > 0 && chars + paragraph.length > 1400) break;
+    out.push(paragraph);
+    chars += paragraph.length;
+    if (chars >= 700) break;
+  }
+  const block = out.join('\n\n').trim();
+  return block || text.trim().slice(0, 1400);
 }
 
 function nextPendingSection(state: GuidedReadingState): GuidedReadingSection | undefined {
