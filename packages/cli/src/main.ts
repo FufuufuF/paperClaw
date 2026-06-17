@@ -43,7 +43,7 @@ import {
   readProfile,
 } from '@paperclaw/paper';
 import { CLIChannel } from './channel/adapter.js';
-import { CliSessionController } from './session-controller.js';
+import { CliSessionController, initializeCliSession } from './session-controller.js';
 import {
   createPaperCronRunner,
   PAPER_RECOMMENDATION_TASK_ID,
@@ -99,6 +99,9 @@ async function main() {
   });
   const dream = new Dream({ store: memoryStore, llm, storeDir });
   const sessionController = new CliSessionController(sessionStore);
+  await initializeCliSession(sessionController, sessionStore, {
+    reuseDefault: boolEnv('PAPERCLAW_CLI_REUSE_DEFAULT_SESSION', false),
+  });
   const searchState = new PaperSearchState();
   const contextBuilder = new ContextBuilder({
     workspace: repoRoot,
