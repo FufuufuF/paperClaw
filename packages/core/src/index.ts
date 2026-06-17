@@ -197,7 +197,7 @@ export type {
   RunnerResult,
   ToolRunEvent,
 } from './agent/runner.js';
-export type { AgentLoopConfig, TurnContext, TurnState } from './agent/loop.js';
+export type { AgentLoopConfig, StateTraceEntry, TurnContext, TurnState, TurnStateEvent } from './agent/loop.js';
 export { AgentLoop } from './agent/loop.js';
 export {
   AgentRunner,

@@ -9,7 +9,7 @@ build/
 *.tsbuildinfo
 
 # Runtime store (per run / cross-run)
-nanobot-store/
+paperclaw-store/
 output/
 *.sqlite
 *.sqlite-shm

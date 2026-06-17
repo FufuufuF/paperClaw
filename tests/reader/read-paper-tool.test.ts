@@ -92,11 +92,11 @@ async function testReadPaperSectionLoadsContentOnly(): Promise<void> {
       [
         'Agent Harness Paper',
         'Abstract',
-        'Agent harness paper studies tool failures and recovery protocols.',
+        'Agent harness paper studies tool failures and recovery protocols. '.repeat(35),
         '1 Introduction',
-        'The introduction motivates reliable agent execution traces.',
+        'The introduction motivates reliable agent execution traces. '.repeat(45),
         '2 Method',
-        'The method defines a failure taxonomy for tool calls.',
+        'The method defines a failure taxonomy for tool calls. '.repeat(45),
       ].join('\n'),
       'utf8',
     );
@@ -157,11 +157,11 @@ async function testRecordPaperSectionNoteWritesNoteAndProgress(): Promise<void> 
       [
         'Agent Harness Paper',
         'Abstract',
-        'Agent harness paper studies tool failures and recovery protocols.',
+        'Agent harness paper studies tool failures and recovery protocols. '.repeat(35),
         '1 Introduction',
-        'The introduction motivates reliable agent execution traces.',
+        'The introduction motivates reliable agent execution traces. '.repeat(45),
         '2 Method',
-        'The method defines a failure taxonomy for tool calls.',
+        'The method defines a failure taxonomy for tool calls. '.repeat(45),
       ].join('\n'),
       'utf8',
     );

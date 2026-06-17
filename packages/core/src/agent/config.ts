@@ -57,8 +57,8 @@ export interface AgentsConfig {
 export const DEFAULT_AGENTS_CONFIG: AgentsConfig = {
   defaults: {
     workspace: '.',
-    storeDir: 'nanobot-store',
-    outputDir: 'nanobot-store',
+    storeDir: 'paperclaw-store',
+    outputDir: 'paperclaw-store',
     provider: 'deepseek',
     model: 'deepseek-chat',
     maxTokens: 8192,

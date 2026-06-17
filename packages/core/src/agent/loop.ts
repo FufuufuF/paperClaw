@@ -1,7 +1,8 @@
-import type { InboundMessage } from '../bus/events.js';
+import { performance } from 'node:perf_hooks';
+import type { InboundMessage, OutboundMessage } from '../bus/events.js';
 import type { MessageBus } from '../bus/queue.js';
 import type { Channel } from '../channels/base.js';
-import type { CommandRouter, CommandRuntimeStatus } from '../command/router.js';
+import type { CommandResult, CommandRouter, CommandRuntimeStatus } from '../command/router.js';
 import type { ChatMessage } from '../providers/base.js';
 import {
   createNewSession,
@@ -65,16 +66,30 @@ export type TurnState =
   | 'DONE'
   | 'ERROR';
 
+export type TurnStateEvent = 'ok' | 'dispatch' | 'shortcut';
+
+export interface StateTraceEntry {
+  state: TurnState;
+  startedAt: number;
+  durationMs: number;
+  event: TurnStateEvent | '';
+  error?: string;
+}
+
 export interface TurnContext {
   inbound: InboundMessage;
   sessionId: string;
-  session: Session;
-  userTurn: Turn;
   state: TurnState;
+  session?: Session;
+  userTurn?: Turn;
   systemPrompt?: string;
   sessionSummary?: string;
   runnerResult?: Awaited<ReturnType<AgentRunner['run']>>;
   commandName?: string;
+  commandResult?: CommandResult;
+  messages?: ChatMessage[];
+  outbound?: OutboundMessage;
+  trace: StateTraceEntry[];
 }
 
 /**
@@ -85,6 +100,17 @@ export interface TurnContext {
  * 对 sub-agent 的调用走 Runner (runToolLoop), 不走 AgentLoop.
  */
 export class AgentLoop {
+  private static readonly TRANSITIONS: Record<string, TurnState> = {
+    'RESTORE:ok': 'COMPACT',
+    'COMPACT:ok': 'COMMAND',
+    'COMMAND:dispatch': 'BUILD',
+    'COMMAND:shortcut': 'DONE',
+    'BUILD:ok': 'RUN',
+    'RUN:ok': 'SAVE',
+    'SAVE:ok': 'RESPOND',
+    'RESPOND:ok': 'DONE',
+  };
+
   private sessions?: SessionManager;
   private readonly locks = new Map<string, Promise<void>>();
   private readonly activeTasks = new Map<string, AbortController>();
@@ -120,158 +146,15 @@ export class AgentLoop {
 
   private async processLocked(sessionId: string, inbound: InboundMessage): Promise<void> {
     const manager = this.getOrCreateSessionManager();
-    let ctx: TurnContext | undefined;
+    const ctx: TurnContext = {
+      inbound,
+      sessionId,
+      state: 'RESTORE',
+      trace: [],
+    };
 
     try {
-      // ── RESTORE ─────────────────────────────────────────────────────
-      let session = await manager.getOrCreate(sessionId);
-      const prepared = await this.config.autoCompact?.prepareSession(session, sessionId);
-      if (prepared) {
-        session = prepared.session;
-      }
-      const sessionSummary = prepared?.summary ?? getLastSessionSummary(session)?.text;
-      const userTurn: Turn = {
-        role: 'user',
-        content: inbound.text,
-        tokenEstimate: estimateTokens(inbound.text),
-        timestamp: inbound.timestamp,
-      };
-      ctx = {
-        inbound,
-        sessionId,
-        session,
-        userTurn,
-        state: 'RESTORE',
-        sessionSummary,
-      };
-      session.turns.push(userTurn);
-      session.metadata.lastActiveAt = new Date().toISOString();
-      session.metadata.runtimeCheckpoint = undefined;
-      await manager.save(session); // 早持久化: 崩溃也不会丢 user turn.
-      await this.traceState(ctx, 'RESTORE');
-
-      // ── COMPACT ─────────────────────────────────────────────────────
-      ctx.state = 'COMPACT';
-      await this.traceState(ctx, 'COMPACT');
-
-      // ── COMMAND ─────────────────────────────────────────────────────
-      ctx.state = 'COMMAND';
-      const cmdResult = await this.config.commands.handle(inbound.text, session, {
-        tools: this.config.runner.tools,
-        llm: this.config.runner.llm,
-        status: this.config.status,
-        createSession: createNewSession,
-        createSessionId: this.config.createSessionId,
-        cancelActiveTask: (id) => this.cancelActiveTask(id),
-      });
-      if (cmdResult) {
-        const commandName = inbound.text.split(/\s/)[0] ?? inbound.text;
-        userTurn.command = commandName;
-        // shortcut: 不走 LLM. 把 user turn + assistant turn 都记下来.
-        const assistantTurn: Turn = {
-          role: 'assistant',
-          content: cmdResult.text,
-          command: commandName,
-          tokenEstimate: estimateTokens(cmdResult.text),
-          timestamp: Date.now(),
-        };
-
-        let outSession = session;
-        if (cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId) {
-          session.turns.push(assistantTurn);
-          session.metadata.lastActiveAt = new Date().toISOString();
-          await manager.save(session);
-          await manager.save(cmdResult.mutatedSession);
-          outSession = cmdResult.mutatedSession;
-        } else if (cmdResult.mutatedSession) {
-          // /clear 这类命令返回新 session — 用它替换当前的. 但 userTurn
-          // 之前已经 push 进旧 session 了, 新 session 里没有 — 我们把它
-          // 补进去, 让 transcript 仍然显示 "user 输入了 /clear".
-          outSession = cmdResult.mutatedSession;
-          outSession.turns.push(userTurn, assistantTurn);
-        } else {
-          outSession.turns.push(assistantTurn);
-        }
-        outSession.metadata.lastActiveAt = new Date().toISOString();
-
-        ctx.session = outSession;
-        ctx.commandName = commandName;
-        if (!(cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId)) {
-          await manager.save(outSession);
-        }
-        if (cmdResult.switchSessionId) {
-          await this.config.switchSession?.(cmdResult.switchSessionId);
-        }
-        const metadata = cmdResult.uiIntent
-          ? { ...cmdResult.metadata, uiIntent: cmdResult.uiIntent }
-          : cmdResult.metadata;
-        await this.send({ kind: 'final', text: cmdResult.text, replyTo: inbound.id, metadata });
-
-        await this.config.trace?.emit('loop', 'phase_end', {
-          phase_name: 'COMMAND',
-          session_id: sessionId,
-          command: commandName,
-        });
-        return;
-      }
-      await this.traceState(ctx, 'COMMAND');
-
-      // ── BUILD ───────────────────────────────────────────────────────
-      ctx.state = 'BUILD';
-      const systemPrompt = await this.config.buildPrompt(ctx);
-      ctx.systemPrompt = systemPrompt;
-      const messages = withRuntimeContext(
-        buildSessionMessages(sessionReplayView(session), this.config.runner.contextBudget),
-        ctx,
-        this.config.channel?.name,
-      );
-      await this.traceState(ctx, 'BUILD');
-
-      // ── RUN ─────────────────────────────────────────────────────────
-      ctx.state = 'RUN';
-      const controller = new AbortController();
-      this.activeTasks.set(sessionId, controller);
-      const runner = new AgentRunner(this.config.runner.llm);
-      const result = await runner.run({
-        ...this.config.runner,
-        systemPrompt,
-        initialMessages: messages,
-        checkpointCallback: async (checkpoint) => {
-          session.metadata.runtimeCheckpoint = checkpoint;
-          await manager.save(session);
-          await this.sendProgressForCheckpoint(ctx!, checkpoint);
-          await this.config.runner.checkpointCallback?.(checkpoint);
-        },
-      });
-      this.activeTasks.delete(sessionId);
-      ctx.runnerResult = result;
-
-      // 把 Runner 产出的所有 newTurns 追加到 session
-      for (const t of result.newTurns) session.turns.push(t);
-      session.metadata.totalUsage.input += result.usage.input;
-      session.metadata.totalUsage.output += result.usage.output;
-      session.metadata.lastActiveAt = new Date().toISOString();
-      session.metadata.runtimeCheckpoint = undefined;
-      await this.traceState(ctx, 'RUN');
-
-      // ── SAVE ────────────────────────────────────────────────────────
-      ctx.state = 'SAVE';
-      await manager.save(session);
-      await this.traceState(ctx, 'SAVE');
-
-      // ── RESPOND ─────────────────────────────────────────────────────
-      ctx.state = 'RESPOND';
-      await this.send({ kind: 'final', text: result.text, replyTo: inbound.id });
-      await this.traceState(ctx, 'RESPOND');
-
-      await this.config.trace?.emit('loop', 'usage', {
-        session_id: sessionId,
-        iterations: result.iterations,
-        truncated: result.truncated,
-        input: result.usage.input,
-        output: result.usage.output,
-      });
-      ctx.state = 'DONE';
+      await this.runStateMachine(ctx, manager);
     } catch (err) {
       this.activeTasks.delete(sessionId);
       const msg = err instanceof Error ? err.message : String(err);
@@ -279,8 +162,8 @@ export class AgentLoop {
         session_id: sessionId,
         error: msg,
       });
-      if (ctx) {
-        ctx.state = 'ERROR';
+      ctx.state = 'ERROR';
+      if (ctx.session) {
         const assistantTurn: Turn = {
           role: 'assistant',
           content: `抱歉, 处理这条消息时出错: ${msg}`,
@@ -308,6 +191,246 @@ export class AgentLoop {
       // 重抛: 由 channel/main 决定要不要 crash
       throw err;
     }
+  }
+
+  private async runStateMachine(ctx: TurnContext, manager: SessionManager): Promise<void> {
+    while (ctx.state !== 'DONE') {
+      const state = ctx.state;
+      const startedAt = performance.now();
+      let event: TurnStateEvent | '' = '';
+
+      await this.config.trace?.emit('loop', 'phase_begin', {
+        phase_name: state,
+        session_id: ctx.sessionId,
+      });
+
+      try {
+        event = await this.runStateHandler(ctx, manager);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.recordStateTrace(ctx, {
+          state,
+          startedAt,
+          event: '',
+          error: msg,
+        });
+        throw err;
+      }
+
+      await this.recordStateTrace(ctx, { state, startedAt, event });
+      ctx.state = this.nextState(state, event);
+    }
+  }
+
+  private async runStateHandler(ctx: TurnContext, manager: SessionManager): Promise<TurnStateEvent> {
+    switch (ctx.state) {
+      case 'RESTORE':
+        return await this.stateRestore(ctx, manager);
+      case 'COMPACT':
+        return await this.stateCompact(ctx);
+      case 'COMMAND':
+        return await this.stateCommand(ctx, manager);
+      case 'BUILD':
+        return await this.stateBuild(ctx);
+      case 'RUN':
+        return await this.stateRun(ctx, manager);
+      case 'SAVE':
+        return await this.stateSave(ctx, manager);
+      case 'RESPOND':
+        return await this.stateRespond(ctx);
+      case 'DONE':
+      case 'ERROR':
+        throw new Error(`AgentLoop: cannot run terminal state ${ctx.state}`);
+    }
+  }
+
+  private async stateRestore(ctx: TurnContext, manager: SessionManager): Promise<TurnStateEvent> {
+    let session = await manager.getOrCreate(ctx.sessionId);
+    const prepared = await this.config.autoCompact?.prepareSession(session, ctx.sessionId);
+    if (prepared) {
+      session = prepared.session;
+    }
+    const sessionSummary = prepared?.summary ?? getLastSessionSummary(session)?.text;
+    const userTurn: Turn = {
+      role: 'user',
+      content: ctx.inbound.text,
+      tokenEstimate: estimateTokens(ctx.inbound.text),
+      timestamp: ctx.inbound.timestamp,
+    };
+
+    ctx.session = session;
+    ctx.userTurn = userTurn;
+    ctx.sessionSummary = sessionSummary;
+
+    session.turns.push(userTurn);
+    session.metadata.lastActiveAt = new Date().toISOString();
+    session.metadata.runtimeCheckpoint = undefined;
+    await manager.save(session); // 早持久化: 崩溃也不会丢 user turn.
+    return 'ok';
+  }
+
+  private async stateCompact(_ctx: TurnContext): Promise<TurnStateEvent> {
+    return 'ok';
+  }
+
+  private async stateCommand(ctx: TurnContext, manager: SessionManager): Promise<TurnStateEvent> {
+    const session = requiredSession(ctx);
+    const userTurn = requiredUserTurn(ctx);
+    const cmdResult = await this.config.commands.handle(ctx.inbound.text, session, {
+      tools: this.config.runner.tools,
+      llm: this.config.runner.llm,
+      status: this.config.status,
+      createSession: createNewSession,
+      createSessionId: this.config.createSessionId,
+      cancelActiveTask: (id) => this.cancelActiveTask(id),
+    });
+
+    if (!cmdResult) return 'dispatch';
+
+    const commandName = ctx.inbound.text.split(/\s/)[0] ?? ctx.inbound.text;
+    userTurn.command = commandName;
+    ctx.commandName = commandName;
+    ctx.commandResult = cmdResult;
+
+    // shortcut: 不走 LLM. 把 user turn + assistant turn 都记下来.
+    const assistantTurn: Turn = {
+      role: 'assistant',
+      content: cmdResult.text,
+      command: commandName,
+      tokenEstimate: estimateTokens(cmdResult.text),
+      timestamp: Date.now(),
+    };
+
+    let outSession = session;
+    if (cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId) {
+      session.turns.push(assistantTurn);
+      session.metadata.lastActiveAt = new Date().toISOString();
+      await manager.save(session);
+      await manager.save(cmdResult.mutatedSession);
+      outSession = cmdResult.mutatedSession;
+    } else if (cmdResult.mutatedSession) {
+      // /clear 这类命令返回新 session — 用它替换当前的. 但 userTurn
+      // 之前已经 push 进旧 session 了, 新 session 里没有 — 我们把它
+      // 补进去, 让 transcript 仍然显示 "user 输入了 /clear".
+      outSession = cmdResult.mutatedSession;
+      outSession.turns.push(userTurn, assistantTurn);
+    } else {
+      outSession.turns.push(assistantTurn);
+    }
+    outSession.metadata.lastActiveAt = new Date().toISOString();
+
+    ctx.session = outSession;
+    if (!(cmdResult.mutatedSession && cmdResult.mutatedSession.id !== session.id && cmdResult.switchSessionId)) {
+      await manager.save(outSession);
+    }
+    if (cmdResult.switchSessionId) {
+      await this.config.switchSession?.(cmdResult.switchSessionId);
+    }
+    const metadata = cmdResult.uiIntent
+      ? { ...cmdResult.metadata, uiIntent: cmdResult.uiIntent }
+      : cmdResult.metadata;
+    ctx.outbound = { kind: 'final', text: cmdResult.text, replyTo: ctx.inbound.id, metadata };
+    await this.send(ctx.outbound);
+    return 'shortcut';
+  }
+
+  private async stateBuild(ctx: TurnContext): Promise<TurnStateEvent> {
+    const session = requiredSession(ctx);
+    const systemPrompt = await this.config.buildPrompt(ctx);
+    ctx.systemPrompt = systemPrompt;
+    ctx.messages = withRuntimeContext(
+      buildSessionMessages(sessionReplayView(session), this.config.runner.contextBudget),
+      ctx,
+      this.config.channel?.name,
+    );
+    return 'ok';
+  }
+
+  private async stateRun(ctx: TurnContext, manager: SessionManager): Promise<TurnStateEvent> {
+    const session = requiredSession(ctx);
+    const systemPrompt = requiredValue(ctx.systemPrompt, 'systemPrompt');
+    const messages = requiredValue(ctx.messages, 'messages');
+    const controller = new AbortController();
+    this.activeTasks.set(ctx.sessionId, controller);
+    try {
+      const runner = new AgentRunner(this.config.runner.llm);
+      ctx.runnerResult = await runner.run({
+        ...this.config.runner,
+        systemPrompt,
+        initialMessages: messages,
+        checkpointCallback: async (checkpoint) => {
+          session.metadata.runtimeCheckpoint = checkpoint;
+          await manager.save(session);
+          await this.sendProgressForCheckpoint(ctx, checkpoint);
+          await this.config.runner.checkpointCallback?.(checkpoint);
+        },
+      });
+      return 'ok';
+    } finally {
+      this.activeTasks.delete(ctx.sessionId);
+    }
+  }
+
+  private async stateSave(ctx: TurnContext, manager: SessionManager): Promise<TurnStateEvent> {
+    const session = requiredSession(ctx);
+    const result = requiredValue(ctx.runnerResult, 'runnerResult');
+
+    // 把 Runner 产出的所有 newTurns 追加到 session
+    for (const t of result.newTurns) session.turns.push(t);
+    session.metadata.totalUsage.input += result.usage.input;
+    session.metadata.totalUsage.output += result.usage.output;
+    session.metadata.lastActiveAt = new Date().toISOString();
+    session.metadata.runtimeCheckpoint = undefined;
+    await manager.save(session);
+    return 'ok';
+  }
+
+  private async stateRespond(ctx: TurnContext): Promise<TurnStateEvent> {
+    const result = requiredValue(ctx.runnerResult, 'runnerResult');
+    await this.send({ kind: 'final', text: result.text, replyTo: ctx.inbound.id });
+    await this.config.trace?.emit('loop', 'usage', {
+      session_id: ctx.sessionId,
+      iterations: result.iterations,
+      truncated: result.truncated,
+      input: result.usage.input,
+      output: result.usage.output,
+    });
+    return 'ok';
+  }
+
+  private nextState(state: TurnState, event: TurnStateEvent): TurnState {
+    const next = AgentLoop.TRANSITIONS[`${state}:${event}`];
+    if (!next) {
+      throw new Error(`AgentLoop: no transition from ${state} on event "${event}"`);
+    }
+    return next;
+  }
+
+  private async recordStateTrace(
+    ctx: TurnContext,
+    entry: {
+      state: TurnState;
+      startedAt: number;
+      event: TurnStateEvent | '';
+      error?: string;
+    },
+  ): Promise<void> {
+    const durationMs = performance.now() - entry.startedAt;
+    ctx.trace.push({
+      state: entry.state,
+      startedAt: entry.startedAt,
+      durationMs,
+      event: entry.event,
+      ...(entry.error ? { error: entry.error } : {}),
+    });
+    await this.config.trace?.emit('loop', entry.error ? 'error' : 'phase_end', {
+      phase_name: entry.state,
+      session_id: ctx.sessionId,
+      event: entry.event,
+      duration_ms: durationMs,
+      ...(ctx.commandName ? { command: ctx.commandName } : {}),
+      ...(entry.error ? { error: entry.error } : {}),
+    });
   }
 
   private getOrCreateSessionManager(): SessionManager {
@@ -344,13 +467,6 @@ export class AgentLoop {
     });
   }
 
-  private async traceState(ctx: TurnContext, state: TurnState): Promise<void> {
-    await this.config.trace?.emit('loop', 'phase_begin', {
-      phase_name: state,
-      session_id: ctx.sessionId,
-    });
-  }
-
   private async withSessionLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(id) ?? Promise.resolve();
     let release!: () => void;
@@ -373,6 +489,21 @@ export class AgentLoop {
 function requiredSessionStore(store: SessionStore | undefined): SessionStore {
   if (!store) throw new Error('AgentLoop: sessionStore or sessionManager is required');
   return store;
+}
+
+function requiredSession(ctx: TurnContext): Session {
+  if (!ctx.session) throw new Error(`AgentLoop: state ${ctx.state} requires session`);
+  return ctx.session;
+}
+
+function requiredUserTurn(ctx: TurnContext): Turn {
+  if (!ctx.userTurn) throw new Error(`AgentLoop: state ${ctx.state} requires userTurn`);
+  return ctx.userTurn;
+}
+
+function requiredValue<T>(value: T | undefined, name: string): T {
+  if (value === undefined) throw new Error(`AgentLoop: missing ${name}`);
+  return value;
 }
 
 function withRuntimeContext(messages: ChatMessage[], ctx: TurnContext, channelName?: string): ChatMessage[] {

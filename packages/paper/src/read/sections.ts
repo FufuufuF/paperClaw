@@ -6,6 +6,7 @@ export interface PaperSection {
 }
 
 const MAX_SECTION_CHARS = 14_000;
+const MIN_READING_BLOCK_CHARS = 1_800;
 
 const KNOWN_UNNUMBERED = /^(abstract|introduction|related work|background|method|methods|approach|framework|experiments?|evaluation|results?|analysis|discussion|limitations?|conclusion|references|bibliography|appendix)$/i;
 const NUMBERED_HEADING = /^\d+(?:\.\d+)*\s+\p{Lu}[\p{L}\p{N} ,&:/()'’+\-?.]{2,90}$/u;
@@ -31,7 +32,7 @@ export function splitPaperSections(text: string): PaperSection[] {
     return chunkSection({ index: 1, title: 'Full Text Excerpt', text: normalized.trim() });
   }
 
-  const sections: PaperSection[] = [];
+  const rawSections: Array<{ title: string; text: string }> = [];
   for (let pos = 0; pos < starts.length; pos++) {
     const start = starts[pos]!;
     const title = cleanHeading(lines[start] ?? `Section ${pos + 1}`);
@@ -41,8 +42,11 @@ export function splitPaperSections(text: string): PaperSection[] {
     if (!sectionText) continue;
     const nextTitle = starts[pos + 1] !== undefined ? cleanHeading(lines[starts[pos + 1]!] ?? '') : '';
     if (sectionText.length < 120 && isParentHeading(title, nextTitle)) continue;
-    sections.push(...chunkSection({ index: sections.length + 1, title, text: sectionText }));
+    rawSections.push({ title, text: sectionText });
   }
+
+  const merged = mergeShortSections(rawSections);
+  const sections = merged.flatMap((section, idx) => chunkSection({ index: idx + 1, ...section }));
 
   return sections.length > 0
     ? sections.map((section, idx) => ({ ...section, index: idx + 1 }))
@@ -83,6 +87,50 @@ function stripNumber(title: string): string {
 function isParentHeading(title: string, nextTitle: string): boolean {
   const match = /^(\d+)\s+/.exec(title);
   return Boolean(match && nextTitle.startsWith(`${match[1]}.`));
+}
+
+function mergeShortSections(sections: Array<{ title: string; text: string }>): Array<{ title: string; text: string }> {
+  if (sections.length <= 1) return sections;
+
+  const out: Array<{ title: string; text: string }> = [];
+  let pending: { title: string; text: string } | null = null;
+
+  for (const section of sections) {
+    if (!pending) {
+      pending = section;
+      continue;
+    }
+
+    if (pending.text.length < MIN_READING_BLOCK_CHARS && canMerge(pending, section)) {
+      pending = mergePair(pending, section);
+      continue;
+    }
+
+    out.push(pending);
+    pending = section;
+  }
+
+  if (pending) {
+    const last = out.at(-1);
+    if (pending.text.length < MIN_READING_BLOCK_CHARS && last && canMerge(last, pending)) {
+      out[out.length - 1] = mergePair(last, pending);
+    } else {
+      out.push(pending);
+    }
+  }
+
+  return out;
+}
+
+function canMerge(a: { text: string }, b: { text: string }): boolean {
+  return a.text.length + b.text.length <= MAX_SECTION_CHARS;
+}
+
+function mergePair(a: { title: string; text: string }, b: { title: string; text: string }): { title: string; text: string } {
+  return {
+    title: `${a.title} / ${b.title}`,
+    text: `${a.text.trim()}\n\n${b.text.trim()}`,
+  };
 }
 
 function chunkSection(section: { index: number; title: string; text: string }): PaperSection[] {
