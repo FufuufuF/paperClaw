@@ -121,6 +121,7 @@ export function createDownloadPaperTool(opts: PaperSearchToolOpts & { state: Pap
     readOnly: false,
     concurrencySafe: false,
     exclusive: true,
+    timeoutMs: 150_000,
     scopes: ['paper-search'],
     confirmation: {
       required: true,
