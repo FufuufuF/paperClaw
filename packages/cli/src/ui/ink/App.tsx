@@ -9,7 +9,7 @@ import { ToolProgress } from './components/ToolProgress.js';
 
 export function InkCliApp(props: {
   store: InkCliStore;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string) => boolean | void;
   onExit: () => void;
   onSwitchMove: (delta: number) => void;
   onSwitchConfirm: () => void;

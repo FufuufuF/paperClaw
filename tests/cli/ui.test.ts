@@ -9,6 +9,12 @@ import {
   createSwitchPickerItems,
   moveSwitchSelection,
 } from '../../packages/cli/src/ui/ink/switch-picker.js';
+import {
+  canSubmitInput,
+  retainInputWithoutSubmitBreak,
+  shouldSuppressBufferedSubmit,
+} from '../../packages/cli/src/ui/ink/components/InputBox.js';
+import { isRecentlyFinished, isSubmitBlocked } from '../../packages/cli/src/channel/ink-channel.js';
 import { InkCliStore } from '../../packages/cli/src/ui/ink/store.js';
 import { shouldUseInk } from '../../packages/cli/src/ui/terminal.js';
 import { assert } from '../fixtures/index.js';
@@ -129,6 +135,28 @@ function testToolExtraction(): void {
   assert(renderedTool.includes('Loading related paper metadata × 2'), 'plain tool rendering is compact');
 }
 
+function testInputSubmitAvailability(): void {
+  assert(canSubmitInput('idle'), 'idle input can submit');
+  assert(!canSubmitInput('working'), 'working input cannot submit');
+  assert(canSubmitInput('error'), 'error state input can submit');
+  assert(!isSubmitBlocked(false, 'idle'), 'idle channel submit is allowed');
+  assert(isSubmitBlocked(true, 'idle'), 'processing channel submit is blocked');
+  assert(isSubmitBlocked(false, 'working'), 'working channel submit is blocked');
+  assert(isRecentlyFinished(6000, 2000), 'recently finished channel rejects buffered submit');
+  assert(isSubmitBlocked(false, 'idle', 6000, 2000), 'recent finish blocks stale submit');
+  assert(!isRecentlyFinished(8000, 2000), 'recent finish block expires');
+  assert(shouldSuppressBufferedSubmit(100, 200), 'recent post-working submit is suppressed');
+  assert(!shouldSuppressBufferedSubmit(300, 200), 'expired post-working submit is allowed');
+  assert(
+    retainInputWithoutSubmitBreak('next prompt\n') === 'next prompt',
+    'busy newline keeps text without submit break',
+  );
+  assert(
+    retainInputWithoutSubmitBreak('first\r\nsecond\n') === 'first\nsecond',
+    'busy multiline paste keeps internal line breaks',
+  );
+}
+
 function testSwitchPickerItems(): void {
   const items = createSwitchPickerItems([
     {
@@ -171,6 +199,7 @@ function main(): void {
   testModeSelection();
   testPlainRendering();
   testToolExtraction();
+  testInputSubmitAvailability();
   testSwitchPickerItems();
   console.log('✓ cli ui tests passed.');
 }
