@@ -1,5 +1,5 @@
 import { customAlphabet } from 'nanoid';
-import type { SessionStore } from '@paperclaw/core';
+import { createNewSession, type SessionStore } from '@paperclaw/core';
 
 export const CLI_SESSION_UID_LENGTH = 10;
 
@@ -48,6 +48,27 @@ export class CliSessionController {
     }
     throw new Error('failed to create a unique session id');
   }
+}
+
+export interface InitializeCliSessionOpts {
+  reuseDefault?: boolean;
+  sessionName?: string;
+}
+
+export async function initializeCliSession(
+  controller: CliSessionController,
+  store: SessionStore,
+  opts: InitializeCliSessionOpts = {},
+): Promise<CreatedCliSession | null> {
+  if (opts.reuseDefault) return null;
+  const next = await controller.createNextId(opts.sessionName);
+  await store.save(createNewSession(next.id, {
+    sessionName: next.sessionName,
+    uid: next.uid,
+    channel: next.channel,
+  }));
+  controller.switchTo(next.id);
+  return next;
 }
 
 function normalizeSessionName(name?: string): string | undefined {

@@ -1,5 +1,9 @@
 import { join } from 'node:path';
-import { CliSessionController, CLI_SESSION_UID_LENGTH } from '../../packages/cli/src/session-controller.js';
+import {
+  CliSessionController,
+  CLI_SESSION_UID_LENGTH,
+  initializeCliSession,
+} from '../../packages/cli/src/session-controller.js';
 import { createNewSession, FileSessionStore } from '../../packages/core/src/index.js';
 import { assert, withTempDir } from '../fixtures/index.js';
 
@@ -54,11 +58,41 @@ async function testAvoidExistingIdCollision(): Promise<void> {
   });
 }
 
+async function testInitializeCliSessionCreatesFreshSession(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    const created = await initializeCliSession(controller, store);
+
+    assert(created !== null, 'startup creates a session by default');
+    assert(created!.id !== 'cli:default', 'startup session does not use cli:default');
+    assert(controller.current() === created!.id, 'startup switches active session to fresh id');
+    const saved = await store.load(created!.id);
+    assert(saved !== null, 'startup session is persisted immediately');
+    assert(saved!.metadata.uid === created!.uid, 'startup session stores uid metadata');
+    assert(saved!.metadata.channel === 'cli', 'startup session stores channel metadata');
+  });
+}
+
+async function testInitializeCliSessionCanReuseDefault(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const store = new FileSessionStore(join(dir, 'sessions'));
+    const controller = new CliSessionController(store);
+    const created = await initializeCliSession(controller, store, { reuseDefault: true });
+
+    assert(created === null, 'explicit reuse does not create a startup session');
+    assert(controller.current() === 'cli:default', 'explicit reuse keeps default active session');
+    assert((await store.list()).length === 0, 'explicit reuse does not write a new session');
+  });
+}
+
 async function main(): Promise<void> {
   await testNamedSessionId();
   await testUnnamedSessionId();
   await testSwitchState();
   await testAvoidExistingIdCollision();
+  await testInitializeCliSessionCreatesFreshSession();
+  await testInitializeCliSessionCanReuseDefault();
   console.log('✓ cli session controller tests passed.');
 }
 
