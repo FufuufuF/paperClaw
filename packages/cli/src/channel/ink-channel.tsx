@@ -13,7 +13,9 @@ import { InkCliApp } from '../ui/ink/App.js';
 import { InkCliStore } from '../ui/ink/store.js';
 import { createSwitchPickerItems } from '../ui/ink/switch-picker.js';
 import { extractToolNames, renderToolSummary } from '../ui/plain/render.js';
-import type { CLIChannelOpts, CliMessageRole } from './types.js';
+import type { CLIChannelOpts, CliMessageRole, CliRunState } from './types.js';
+
+const RECENT_FINISH_BLOCK_MS = 5000;
 
 export class InkCLIChannel implements Channel {
   readonly name = 'cli';
@@ -23,6 +25,7 @@ export class InkCLIChannel implements Channel {
   private instance: Instance | null = null;
   private running = false;
   private processing = false;
+  private lastProcessingFinishedAt = 0;
   private msgCounter = 0;
   private readonly senderId: string;
   private readonly getStatus?: CLIChannelOpts['getStatus'];
@@ -84,7 +87,7 @@ export class InkCLIChannel implements Channel {
     this.instance = render(
       <InkCliApp
         store={this.store}
-        onSubmit={(text) => void this.submit(text)}
+        onSubmit={(text) => this.submit(text)}
         onExit={() => void this.requestExit()}
         onSwitchMove={(delta) => this.store.moveSwitchPicker(delta)}
         onSwitchConfirm={() => void this.confirmSwitchPicker()}
@@ -113,12 +116,27 @@ export class InkCLIChannel implements Channel {
     await instance.waitUntilExit().catch(() => undefined);
   }
 
-  private async submit(text: string): Promise<void> {
+  private submit(text: string): boolean {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     if (trimmed === '/quit' || trimmed === '/exit') {
-      await this.requestExit();
-      return;
+      void this.requestExit();
+      return true;
+    }
+    const now = Date.now();
+    const lastProcessingFinishedAt = trimmed.startsWith('/') ? 0 : this.lastProcessingFinishedAt;
+    const recentlyFinished = isRecentlyFinished(now, lastProcessingFinishedAt);
+    if (isSubmitBlocked(this.processing, this.store.getSnapshot().runState, now, lastProcessingFinishedAt)) {
+      if (recentlyFinished) this.lastProcessingFinishedAt = 0;
+      this.store.appendMessage({
+        id: `busy-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        role: 'system',
+        text: recentlyFinished
+          ? '当前任务刚结束, 已保留输入, 再按 Enter 发送.'
+          : '当前任务未结束, 暂不可发送.',
+        timestamp: Date.now(),
+      });
+      return false;
     }
     const inbound: InboundMessage = {
       id: `cli-${++this.msgCounter}`,
@@ -136,6 +154,7 @@ export class InkCLIChannel implements Channel {
     this.queue.push(inbound);
     this.store.setQueuedCount(this.processing ? this.queue.length : Math.max(0, this.queue.length - 1));
     void this.processQueue();
+    return true;
   }
 
   private async openSwitchPicker(): Promise<void> {
@@ -168,7 +187,7 @@ export class InkCLIChannel implements Channel {
     const selected = picker?.items[picker.selectedIndex];
     this.store.closeSwitchPicker();
     if (!selected) return;
-    await this.submit(`/session ${selected.index}`);
+    this.submit(`/session ${selected.index}`);
   }
 
   private cancelSwitchPicker(): void {
@@ -210,6 +229,7 @@ export class InkCLIChannel implements Channel {
       }
     } finally {
       this.processing = false;
+      this.lastProcessingFinishedAt = Date.now();
       this.store.setQueuedCount(this.queue.length);
       if (this.running) {
         this.store.setCurrentTools([]);
@@ -262,6 +282,19 @@ export class InkCLIChannel implements Channel {
         })),
     ]);
   }
+}
+
+export function isSubmitBlocked(
+  processing: boolean,
+  runState: CliRunState,
+  now = 0,
+  lastProcessingFinishedAt = 0,
+): boolean {
+  return processing || runState === 'working' || isRecentlyFinished(now, lastProcessingFinishedAt);
+}
+
+export function isRecentlyFinished(now: number, lastProcessingFinishedAt: number): boolean {
+  return lastProcessingFinishedAt > 0 && now - lastProcessingFinishedAt <= RECENT_FINISH_BLOCK_MS;
 }
 
 function roleFor(kind: NonNullable<OutboundMessage['kind']>): CliMessageRole {
