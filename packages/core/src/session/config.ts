@@ -7,7 +7,7 @@ export interface SessionConfig {
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  dir: 'nanobot-store/sessions',
+  dir: 'paperclaw-store/sessions',
   maxMessages: 120,
   ttlMinutes: 0,
 };

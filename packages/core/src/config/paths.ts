@@ -18,14 +18,14 @@ export function getRepoRoot(): string {
   return process.cwd();
 }
 
-/** `<repo>/nanobot-store/<run_id>/` — created on demand. */
+/** `<repo>/paperclaw-store/<run_id>/` — created on demand. */
 export async function runOutputDir(runId: string, repoRoot?: string): Promise<string> {
   const root = repoRoot ?? getRepoRoot();
-  const dir = resolve(root, 'nanobot-store', runId);
+  const dir = resolve(root, 'paperclaw-store', runId);
   await fs.mkdir(dir, { recursive: true });
   return dir;
 }
 
 export function defaultStoreDir(repoRoot?: string): string {
-  return resolve(repoRoot ?? getRepoRoot(), 'nanobot-store');
+  return resolve(repoRoot ?? getRepoRoot(), 'paperclaw-store');
 }
