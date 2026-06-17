@@ -19,27 +19,69 @@ clawbot 基座解决的是一个通用问题：如何把一个大模型包装成
 
 ---
 
-## Slide 2: 整体分层
+## Slide 2: 项目宏观架构
 
-clawbot 可以分成外层编排和内层执行两层。
+### PPT展示文字
 
-外层是 AgentLoop。它关心一条用户消息从进入系统到回复用户的完整生命周期，包括恢复 session、判断命令、构造 prompt、调用 runner、保存结果、发送回复。
+clawbot 基座把一个对话式 Agent 拆成七个核心模块：
 
-内层是 AgentRunner。它只关心一件事：给定 system prompt、历史消息和工具集合之后，反复调用模型。如果模型要调用工具，就执行工具并把结果继续喂回模型；如果模型不再调用工具，就拿到最终回复。
+- `CLI`：本地命令行入口，负责接收用户输入和展示回复。
+- `Channel`：统一输入输出协议，屏蔽 CLI、飞书、Web 等不同来源。
+- `AgentLoop`：一轮消息的外层状态机，负责 session、命令、上下文构建、保存和回复。
+- `AgentRunner`：模型与工具之间的内层循环，负责 LLM 调用和 tool call 执行。
+- `Tool`：可被模型调用的外部能力，例如搜索、读文件、写笔记。
+- `Skill`：告诉模型如何组合工具完成任务的行为说明。
+- `Memory`：提供长期记忆、用户画像和历史摘要。
+
+一句话概括：
 
 ```text
-Channel -> AgentLoop -> AgentRunner -> LLM
-                         AgentRunner -> ToolRegistry -> Tools
-Channel <- AgentLoop <- final response
+CLI / Channel 负责接入，AgentLoop 负责编排，AgentRunner 负责执行，Tool / Skill / Memory 提供能力和上下文。
 ```
+
+### 图片生成说明
+
+请生成一张简洁的系统架构图，适合放在 PPT 中。
+
+图中包含 7 个模块：`CLI`、`Channel`、`AgentLoop`、`AgentRunner`、`Tool`、`Skill`、`Memory`。
+
+推荐布局：
+
+```mermaid
+flowchart LR
+  CLI[CLI<br/>命令行入口] --> Channel[Channel<br/>输入输出适配层]
+  Channel --> AgentLoop[AgentLoop<br/>外层消息状态机]
+  AgentLoop --> AgentRunner[AgentRunner<br/>模型-工具执行循环]
+  AgentRunner --> LLM[LLM<br/>大模型]
+  AgentRunner --> Tool[Tool<br/>外部能力]
+  Skill[Skill<br/>工具使用策略] --> AgentLoop
+  Skill --> AgentRunner
+  Memory[Memory<br/>长期记忆/历史摘要] --> AgentLoop
+  AgentLoop --> Channel
+  Channel --> CLI
+```
+
+视觉要求：
+
+- 使用横向架构图，从左到右展示消息流。
+- `CLI` 和 `Channel` 放在左侧，表示输入输出边界。
+- `AgentLoop` 放在中间偏左，作为外层编排核心。
+- `AgentRunner` 放在中间偏右，连接 `LLM` 和 `Tool`。
+- `Skill`、`Memory` 放在上方或下方，作为上下文/策略输入连接到 Agent 层。
+- 风格简洁、技术感、适合课堂汇报；不要使用复杂背景。
 
 ---
 
 ## Slide 3: Channel 模块
 
-Channel 模块的目标是把“消息来自哪里、回复发到哪里”和 Agent 内核解耦。
+### PPT展示文字
 
-在代码里，Channel 是一个很小的接口：
+Channel 模块负责连接 Agent 和外部输入输出源。
+
+Agent 只消费 Channel 中的用户消息；生成回复后，也统一发回 Channel。
+
+如果要接入新的消息来源，例如飞书或 Web，只需要实现同一个 Channel 接口：
+
 
 ```ts
 interface Channel {
@@ -51,35 +93,38 @@ interface Channel {
 }
 ```
 
-用户输入会被统一包装成 `InboundMessage`：
+核心思想：
 
-```ts
-{
-  id: string,
-  senderId: string,
-  text: string,
-  timestamp: number
-}
+```text
+不同输入输出源 -> Channel -> Agent -> Channel -> 不同输入输出源
 ```
 
-Agent 的输出会被统一包装成 `OutboundMessage`：
+### 图片生成说明
 
-```ts
-{
-  kind?: 'final' | 'progress' | 'tool_hint' | 'error',
-  text: string,
-  replyTo?: string,
-  metadata?: object
-}
+请生成一张简单的适配器模式示意图。
+
+图中左侧是多个输入输出源：`CLI`、`Feishu`、`Web`。
+
+中间是统一的 `Channel Interface`。
+
+右侧是 `AgentLoop`。
+
+箭头表达：
+
+```text
+CLI / Feishu / Web -> Channel Interface -> AgentLoop
+AgentLoop -> Channel Interface -> CLI / Feishu / Web
 ```
 
-因此 AgentLoop 不需要知道消息来自 CLI、飞书还是未来的 Web 页面。它只处理统一的消息结构。
+重点突出：新增一种输入输出源时，只需要新增一个 Channel 实现，不需要修改 AgentLoop。
 
 ---
 
 ## Slide 4: Tool 模块
 
-Tool 模块负责把外部能力包装成模型可以调用的函数。
+### PPT展示文字
+
+Tool 模块把外部能力包装成模型可以调用的函数。
 
 一个 Tool 主要包含：
 
@@ -95,41 +140,51 @@ interface Tool {
 }
 ```
 
-其中 `name`、`description`、`parameters` 描述工具能力和参数格式，`execute` 是真正执行工具的代码。
+`ToolRegistry` 负责统一管理工具：
 
-模型本身不会直接执行代码。它只返回 tool call；具体参数解析、参数校验、错误包装和函数调用，都由 Tool 模块负责。
+- `register()`：注册工具。
+- `getToolDefs()`：生成传给 LLM 的工具 schema。
+- `prepareCall()`：解析并校验模型传来的参数。
+- `execute()`：执行工具，并统一包装结果。
+- `scope()`：给 sub-agent 派生受限工具集。
 
-所以 Tool 是模型和真实外部能力之间的边界层。
+模型不会直接执行代码。它只产生 tool call，真正的参数校验、错误处理和函数执行都由 ToolRegistry 完成。
 
----
+核心作用：
 
-## Slide 5: ToolRegistry
-
-`ToolRegistry` 是工具注册中心，它主要负责：
-
-1. `register(tool)`：显式注册工具。
-2. `getToolDefs()`：生成传给 LLM 的 tool schema。
-3. `prepareCall()`：解析并校验模型传来的参数。
-4. `execute()`：执行工具，并统一包装执行结果。
-5. `scope()` / `scopeByTag()`：给 sub-agent 派生受限工具集。
-
-这里有一个重要设计：`execute()` 尽量不把错误直接抛给上层。
-
-如果工具名不存在、参数不合法、执行过程中抛错，都会被包装成：
-
-```ts
-{
-  success: false,
-  data: { error: ... },
-  summary: ...
-}
+```text
+Tool = LLM 和外部能力之间的安全边界
 ```
 
-这样 Runner 可以稳定地把工具结果回传给模型，而不是让整个 Agent 流程直接崩掉。
+### 图片生成说明
+
+请生成一张 Tool 调用链路图，适合放在 PPT 中。
+
+图中包含这些节点：
+
+- `LLM`
+- `tool call`
+- `ToolRegistry`
+- `参数解析 / 参数校验 / 错误包装`
+- `具体 Tool`
+- `ToolResult`
+- `LLM final response`
+
+推荐流程：
+
+```text
+LLM -> tool call -> ToolRegistry -> 参数解析与校验 -> 具体 Tool -> ToolResult -> LLM -> final response
+```
+
+视觉重点：
+
+- `ToolRegistry` 放在中间，作为工具调用的统一入口。
+- `具体 Tool` 可以画成一组小卡片，例如 `paper_search`、`read_paper`、`read_note`。
+- 强调 ToolResult 会回到 LLM，而不是直接展示给用户。
 
 ---
 
-## Slide 6: Skill 模块
+## Slide 5: Skill 模块
 
 Tool 只告诉模型“能调用什么函数”，但 Skill 告诉模型“什么时候调用、怎么组合这些工具”。
 
@@ -153,7 +208,7 @@ always: true
 
 ---
 
-## Slide 7: Tool 和 Skill 如何进入模型上下文
+## Slide 6: Tool 和 Skill 如何进入模型上下文
 
 Tool 和 Skill 都会影响模型决策，但进入模型的方式不完全一样。
 
@@ -176,220 +231,761 @@ Skill = prompt 中的行为策略和工具组合方法
 
 ---
 
-## Slide 8: Memory 模块
+## Slide 7: Memory 机制
 
-Memory 模块解决的是长期上下文问题。
+### PPT展示文字
 
-普通聊天系统只靠当前 session 历史，很容易遇到两个问题：
+Memory 模块解决的是上下文长期化问题。
 
-1. 历史太长，超过上下文窗口。
-2. 长期偏好、用户画像、历史经验无法稳定复用。
+它不是只保存一份聊天记录，而是分成三层机制：
 
-clawbot 的 Memory 主要有几类文件：
+1. **Session 原始上下文 + Summary**
+   - Session 保存当前会话的逐轮 turn。
+   - 当上下文过长时，旧 turn 会被压缩成 session summary。
+   - 后续对话只回放最近 turn，并把 summary 注入 prompt。
+
+2. **跨 Session History**
+   - 被压缩或归档的内容会写入 history。
+   - history 记录跨会话的历史材料，避免旧 session 信息完全丢失。
+
+3. **Dream**
+   - Dream 定期读取未处理的 history。
+   - 进一步提炼长期记忆，写入 `MEMORY.md`、`USER.md`、`SOUL.md`。
+   - 这些长期记忆会作为 context block 注入后续 prompt。
+
+核心路径：
 
 ```text
-nanobot-store/
-  MEMORY.md      # 长期记忆
-  SOUL.md        # agent 自我设定或长期行为约束
-  USER.md        # 用户相关信息
-  memory/
-    history.jsonl
-    .cursor
-    .dream_cursor
+Session turns -> Summary -> History -> Dream -> Long-term Memory
 ```
 
-其中 `MEMORY.md`、`SOUL.md`、`USER.md` 会作为 context block 注入 prompt。
+### 图片生成说明
+
+请生成一张 Memory 分层机制图，适合放在 PPT 中。
+
+图中从左到右展示三层：
+
+```text
+Session 原始上下文
+  -> AutoCompact / Consolidator
+  -> Session Summary + History
+  -> Dream
+  -> Long-term Memory
+  -> Prompt Context
+```
+
+节点说明：
+
+- `Session turns`：当前会话原始消息，包括 user / assistant / tool turns。
+- `Session Summary`：压缩后的当前会话摘要，用于继续当前 session。
+- `History`：跨 session 的历史归档。
+- `Dream`：把 history 提炼为长期记忆。
+- `MEMORY.md / USER.md / SOUL.md`：最终长期记忆文件。
+- `Prompt Context`：长期记忆重新进入模型上下文。
+
+视觉重点：
+
+- 用三层颜色区分：短期上下文、跨会话历史、长期记忆。
+- 用箭头表示信息逐步压缩和沉淀。
+- 强调 Memory 不是单一文件，而是一条“压缩、归档、提炼、再注入”的链路。
 
 ---
 
-## Slide 9: Memory 和 Session 的关系
+## Slide 8: AgentLoop 状态机
 
-Session 和 Memory 需要区分。
+### PPT展示文字
 
-Session 保存的是当前对话的逐轮历史，包括 user turn、assistant turn、tool turn。它用于恢复当前会话，让模型知道刚才聊了什么。
+AgentLoop 是一轮用户消息的外层状态机。
 
-Memory 保存的是跨 session 的长期信息。比如用户长期关注什么方向、过去沉淀过哪些重要事实、系统应该长期遵守什么行为偏好。
-
-项目里还有几个和 Memory 相关的模块：
-
-1. `AutoCompact`：在 session 空闲或超预算时触发压缩。
-2. `Consolidator`：把旧对话整理成摘要。
-3. `Dream`：把 history 进一步整理进长期 memory。
-
-所以 session 更像短期工作记忆，memory 更像长期记忆。
-
----
-
-## Slide 10: AgentLoop 当前实现
-
-AgentLoop 负责处理一条用户消息的外层生命周期。
-
-当前代码里的阶段是：
+它使用显式 transition table 驱动状态转移：
 
 ```text
 RESTORE -> COMPACT -> COMMAND -> BUILD -> RUN -> SAVE -> RESPOND -> DONE
 ```
 
-各阶段含义是：
+关键状态：
 
-1. `RESTORE`：加载或创建 session，并先保存用户消息。
-2. `COMPACT`：准备 session 压缩结果或摘要。
-3. `COMMAND`：判断是否是 slash command；如果命中，就可以短路返回。
-4. `BUILD`：构造 system prompt 和发给模型的历史消息。
-5. `RUN`：交给 AgentRunner 执行模型和工具循环。
-6. `SAVE`：把 Runner 产生的新 turn 写回 session。
-7. `RESPOND`：通过 Channel 把最终结果发给用户。
+- `RESTORE`：加载 session，并先保存用户消息。
+- `COMMAND`：处理 slash command；命中时走 shortcut，不进入 LLM。
+- `BUILD`：构造 system prompt 和历史消息。
+- `RUN`：调用 AgentRunner，执行模型与工具循环。
+- `SAVE`：保存本轮产生的新 turns 和 usage。
+- `RESPOND`：把最终回复发回 Channel。
 
-这里需要说明一个现状：当前实现是按这些阶段串行组织代码，还不是 nanobot 里那种显式 `_TRANSITIONS` 转移表驱动的状态机。
+核心价值：
+
+```text
+状态转移显式化，让一轮消息的生命周期可追踪、可测试、可恢复。
+```
+
+### 图片生成说明
+
+请生成一张 AgentLoop 状态机流程图。
+
+主流程：
+
+```text
+RESTORE -> COMPACT -> COMMAND -> BUILD -> RUN -> SAVE -> RESPOND -> DONE
+```
+
+特殊分支：
+
+```text
+COMMAND -- shortcut --> DONE
+```
+
+每个状态画成一个圆角矩形，箭头上标注 event：
+
+- `RESTORE -- ok --> COMPACT`
+- `COMPACT -- ok --> COMMAND`
+- `COMMAND -- dispatch --> BUILD`
+- `COMMAND -- shortcut --> DONE`
+- `BUILD -- ok --> RUN`
+- `RUN -- ok --> SAVE`
+- `SAVE -- ok --> RESPOND`
+- `RESPOND -- ok --> DONE`
+
+视觉重点：
+
+- `COMMAND -- shortcut --> DONE` 用不同颜色表示命令短路路径。
+- `RUN` 状态旁边标注“AgentRunner / LLM + Tools”。
+- 整体风格简洁，突出“显式状态机”和“事件驱动转移”。
 
 ---
 
-## Slide 11: AgentLoop 的可靠性设计
+## Slide 9: AgentRunner 的 ReAct 循环
 
-虽然当前 AgentLoop 还是串行阶段实现，但它已经承担了外层可靠性职责。
+### PPT展示文字
 
-最典型的一点是：在 `RESTORE` 阶段先保存用户消息。
+AgentRunner 是真正执行 ReAct 循环的地方。
+
+它不处理 Channel、slash command 或 session 持久化，只负责一件事：
+
+```text
+给定 system prompt、历史 messages 和 tools，一直运行到模型不再调用工具为止。
+```
+
+一次循环可以理解成四步：
+
+1. **Reason**
+   - Runner 把 system prompt、messages 和 tool schema 传给 LLM。
+   - 模型根据当前上下文决定：直接回答，还是先调用工具。
+
+2. **Act**
+   - 如果模型返回 `tool_calls`，Runner 会先记录这条 assistant turn。
+   - 再通过 `ToolRegistry` 解析参数、校验权限、执行具体工具。
+
+3. **Observe**
+   - 每个 `ToolResult` 会被转成 `role=tool` 的 message。
+   - 这些 observation 会追加回本次 Runner 的 messages，供下一轮 LLM 继续推理。
+
+4. **Finish**
+   - 如果某一轮模型没有返回 `tool_calls`，这段文本就是最终回复。
+   - Runner 返回 `text`、`newTurns`、`usage`、`toolsUsed`，由 AgentLoop 负责保存和回复。
+
+核心循环：
+
+```text
+LLM Reason -> tool_calls Act -> ToolResult Observe -> LLM Reason -> ... -> final answer
+```
+
+这里的关键边界是：Runner 只维护本次运行中的临时 messages 和 newTurns，不直接写 Session。这样内层执行循环可以独立测试，也可以被主 Agent、Dream、Subagent 复用。
+
+### 图片生成说明
+
+请生成一张 AgentRunner ReAct 循环图，适合放在 PPT 中。
+
+主图使用循环结构，而不是普通直线流程。
+
+循环节点：
+
+```text
+Messages + System Prompt + Tool Schemas
+  -> LLM Reason
+  -> tool_calls / Act
+  -> ToolRegistry
+  -> Tool Execution
+  -> ToolResult / Observe
+  -> append role=tool message
+  -> 回到 LLM Reason
+```
+
+退出路径：
+
+```text
+LLM Reason -- no tool_calls --> Final Response
+```
+
+旁边可以加一个小注释框：
+
+```text
+AgentRunner returns:
+text / newTurns / usage / toolsUsed
+AgentLoop saves session and sends response
+```
+
+视觉重点：
+
+- 用环形箭头突出 ReAct 的“推理、行动、观察、再推理”。
+- `ToolRegistry` 放在 `Act` 和 `Tool Execution` 中间，强调工具安全边界。
+- `Final Response` 放在循环外，表示没有 tool call 时退出。
+- 风格与前几页一致：简洁、技术感、少文字。
+
+---
+
+## Slide 10: 根据用户 Query 检索论文
+
+### PPT展示文字
+
+paperClaw 的论文搜索入口是用户自己输入的自然语言 query。
+
+例如用户说：
+
+```text
+帮我找几篇 tool-use agent 评测相关的论文
+```
+
+Agent 会根据 paper search skill 调用 `paper_search`。
+
+这一页只看最基础的 query 检索路径：系统根据用户 query 提取检索关键词，然后去 arXiv 召回论文。
+
+`paper_search` 这个 tool 内部分成四步：
+
+1. **Query Planning**
+   - 作用：用 LLM 把用户自然语言 query 拆成 1-4 个短的英文检索词。
+
+2. **Candidate Recall**
+   - 作用：对每个检索词调用 arXiv Atom API。
+   - 输出：一批候选论文，包括 title、authors、year、abstract、pdf_url。
+
+3. **LLM Triage**
+   - 作用：逐篇阅读 title + abstract，判断这篇论文和 query 的相关性。
+   - 输出：`recommend` / `maybe` / `skip`，以及中文 reason 和 summary。
+
+4. **Ranked Shortlist**
+   - 作用：去重、排序、截断成最多 12 篇 shortlist。
+   - shortlist 会缓存到当前 session，后续用户可以说“下载第 1 篇”或“精读第 3 篇”。
+
+关键边界：
+
+```text
+paper_search 只负责找论文和推荐理由，不会自动下载 PDF，也不会自动精读。
+```
+
+### 图片生成说明
+
+请生成一张论文搜索流程图。
+
+主流程：
+
+```text
+User Query
+  -> paper_search
+  -> Query Planning
+  -> Search Terms
+  -> Candidate Recall
+  -> Candidate Papers
+  -> LLM Triage
+  -> Ranked Shortlist
+  -> Session Shortlist Cache
+```
+
+视觉重点：
+
+- 左侧是用户自然语言 query。
+- 中间突出 `paper_search` 的四个阶段：planning、recall、triage、rank。
+- 右侧展示 shortlist 卡片，每张卡片包含 `title`、`arxiv_id`、`verdict`、`reason`。
+- 只展示上述 query 检索流程。
+- 在 shortlist 旁边标注“Search only: no download / no read unless user confirms”。
+
+---
+
+## Slide 11: 召回论文后的 Guided Reading 流程
+
+### PPT展示文字
+
+搜索只得到 shortlist。真正进入阅读，需要用户明确说“下载 / 精读 / 读第 N 篇”。
+
+阅读流程可以拆成四个工具步骤。
+
+1. **下载 PDF**
+   - 工具：`download_paper`。
+   - 做什么：根据 arXiv id，或者最近一次 shortlist 的编号，下载 PDF。
+   - 产物：`paperclaw-store/pdfs/<arxiv_id>.pdf`。
+
+2. **启动阅读**
+   - 工具：`read_paper`。
+   - 做什么：根据 `pdfPath` 或 `arxivId` 找到本地 PDF。
+   - 它会抽取 PDF 文本，并检查抽取质量；如果文本层太差，就拒绝生成笔记。
+   - 它会把论文正文切成 sections。
+   - 它会创建 Markdown 笔记骨架：`paperclaw-store/<runId>/papers/<slug>.md`。
+   - 它会创建阅读状态文件：`paperclaw-store/<runId>/reader-state/<slug>.json`。
+
+3. **逐节加载和讲解**
+   - 工具：`read_paper_section`。
+   - 做什么：每次只加载一个 section 的正文。
+   - 主 Agent 基于当前 section 和用户对话，逐块讲解。
+   - 它不会一次性总结整篇论文，也不会一次性把完整 PDF 塞进上下文。
+
+4. **保存章节笔记**
+   - 工具：`record_paper_section_note`。
+   - 做什么：当用户明确说“保存 / 记录 / 沉淀”后，把当前 section 的笔记写入 Markdown。
+   - 同时更新 reader-state 中的 section 完成状态。
+   - 后续继续调用 `read_paper_section`，进入下一节。
+
+核心设计：
+
+```text
+PDF 全文留在文件和 reader-state 中；主 Agent 每次只处理一个 section。
+```
+
+### 图片生成说明
+
+请生成一张 guided reading 流程图。
+
+推荐结构：
+
+```text
+Shortlist
+  -> User selects paper
+  -> download_paper
+  -> PDF in paperclaw-store/pdfs
+  -> read_paper
+  -> Markdown Note + Reader State
+  -> read_paper_section
+  -> Agent teaches one section/block
+  -> User confirms save
+  -> record_paper_section_note
+  -> next section loop
+```
+
+视觉重点：
+
+- 把 `read_paper_section -> 讲解 -> 保存笔记 -> next section` 画成循环。
+- 强调 `read_paper` 创建的是阅读计划和状态，不代表已经读完整篇论文。
+- `Markdown Note` 和 `Reader State JSON` 画成两个文件节点。
+- 只展示下载、建阅读状态、逐节讲解和保存笔记这条流程。
+- 用一个小标签说明“only one section enters current model context”。
+
+---
+
+## Slide 12: Reader State 如何保存阅读进度
+
+### PPT展示文字
+
+guided reading 的进度不是只写在 Markdown 笔记里，而是有一个专门的 reader-state JSON。
+
+路径是：
+
+```text
+paperclaw-store/<runId>/reader-state/<slug>.json
+```
+
+它保存的是“这篇论文当前读到哪里了”。
+
+核心数据结构：
 
 ```ts
-let session = await manager.getOrCreate(sessionId);
-
-const userTurn = {
-  role: 'user',
-  content: inbound.text,
-  tokenEstimate: estimateTokens(inbound.text),
-  timestamp: inbound.timestamp,
-};
-
-session.turns.push(userTurn);
-await manager.save(session);
+{
+  version: 1,
+  slug: string,
+  title: string,
+  pdfPath: string,
+  notePath: string,
+  profilePath: string,
+  extraction: string,
+  extractionQuality: string,
+  createdAt: string,
+  updatedAt: string,
+  completed: boolean,
+  sections: [
+    {
+      index: number,
+      title: string,
+      chars: number,
+      text: string,
+      status: "pending" | "done",
+      note?: string,        // 已保存的章节笔记副本
+      completedAt?: string
+    }
+  ]
+}
 ```
 
-这意味着系统不是先调用模型，而是先确保用户消息已经落盘。
+这里的 `note` 字段不是替代 Markdown 笔记。
 
-即使后面 LLM 请求失败、工具执行失败、进程中断，用户刚才输入的内容也不会丢。
+它的作用是：
 
----
+- Markdown note 是给人读的正式笔记文件。
+- reader-state 里的 `sections[i].note` 是机器状态里的章节笔记副本。
+- 当用户保存某一节笔记时，系统会同时更新 Markdown note 和 reader-state。
+- 这样后续恢复阅读时，系统不仅知道某节已经 done，也能知道当时保存了什么内容。
 
-## Slide 12: AgentRunner 的职责
+它的更新机制分三步：
 
-AgentRunner 是内层执行循环。它不关心 Channel，也不直接保存 Session。
+1. **read_paper 创建状态**
+   - 抽取 PDF 文本后，把论文切成 sections。
+   - 当前切分标准是：优先按论文标题行切分，例如 `Abstract`、`Introduction`、`1 Method`、`2.1 Evaluation`。
+   - 过长 section 会按最多约 14,000 字符拆成 part。
+   - 过短 section 会和相邻 section 合并，避免一个阅读块上下文太碎。
+   - 每个 section 初始都是 `status = "pending"`。
+   - 整篇论文初始是 `completed = false`。
 
-它拿到的是：
+2. **read_paper_section 读取状态**
+   - 读取 reader-state，选择指定 section，或者默认选择第一个 pending section。
+   - 返回当前 section 的正文给主 Agent。
+   - 这一步只读，不推进进度。
 
-1. system prompt。
-2. 当前对话 messages。
-3. ToolRegistry。
-4. LLM client。
-5. 最大迭代次数和上下文预算。
+3. **record_paper_section_note 推进状态**
+   - 用户确认保存后，把当前 section 标记为 `done`。
+   - 把 section note 写入 `sections[i].note`。
+   - 写入 `completedAt`，同步更新 `updatedAt`。
+   - 如果所有 sections 都是 `done`，整篇论文 `completed = true`。
+   - 同时更新 Markdown note 里的 Reading Plan checkbox。
 
-它返回的是：
-
-1. 最终回复文本。
-2. 本次运行产生的新 turns。
-3. token usage。
-4. 使用过哪些工具。
-5. 停止原因。
-
-所以 Runner 的边界很清楚：它只负责“模型和工具怎么跑到最终答案为止”，不负责外部生命周期。
-
----
-
-## Slide 13: AgentRunner 的内层循环
-
-AgentRunner 的核心逻辑是 tool-use iteration loop：
+所以论文阅读进度的来源是：
 
 ```text
-while iteration < maxIterations:
-  1. 整理 messages，控制上下文预算
-  2. 调 LLM，携带 tool definitions
-  3. 如果模型返回 tool_calls：
-       执行工具
-       把 tool result 追加为 tool message
-       继续下一轮
-  4. 如果没有 tool_calls：
-       当前 assistant text 就是最终回复
-       返回给 AgentLoop
+reader-state JSON 是机器可恢复的进度；Markdown note 是人可读的笔记。
 ```
 
-这里有两个关键点：
+### 图片生成说明
 
-第一，工具调用不是外层硬编码决定的，而是模型根据 prompt、skill 和 tool schema 自己决定。
+请生成一张 reader-state 数据结构和更新机制图。
 
-第二，工具结果不会直接展示给用户，而是先回到模型上下文里，让模型基于真实结果组织最终回答。
-
----
-
-## Slide 14: Runner 的上下文治理
-
-Runner 每轮请求模型前，会先治理消息上下文。
-
-主要包括：
-
-1. 删除孤立的 tool result，避免 provider 拒绝非法消息序列。
-2. 给缺失 tool result 的 tool call 补占位结果，保证工具调用配对完整。
-3. 压缩过长的 tool result。
-4. 根据 context budget 裁剪历史。
-5. 对空回复和 length 截断做恢复。
-
-这个设计让 Runner 更像一个健壮的执行引擎，而不是简单地调用一次 LLM API。
-
-尤其是在工具调用很多、PDF 内容很长、搜索结果很长的场景下，上下文治理是保证系统能持续运行的关键。
-
----
-
-## Slide 15: 一条普通消息的完整链路
-
-把这些模块串起来看，一条普通用户消息的流程是：
+左侧展示文件：
 
 ```text
-1. 用户在 CLI 输入一句话
-2. Channel 把它包装成 InboundMessage
-3. AgentLoop 根据 senderId 找到 session
-4. AgentLoop 保存 user turn
-5. AgentLoop 判断是否是 slash command
-6. ContextBuilder 构造 system prompt
-   - 加入 Tool 列表说明
-   - 加入 Skill 内容
-   - 加入 Memory context
-7. AgentRunner 调用 LLM，并传入 tool schema
-8. 如果 LLM 要用工具，ToolRegistry 执行工具
-9. 工具结果回到 Runner，再次交给 LLM
-10. LLM 生成最终回复
-11. AgentLoop 保存 assistant turn
-12. Channel 把回复打印回终端
+paperclaw-store/<runId>/reader-state/<slug>.json
 ```
 
-这样，clawbot 基座就完成了一轮从输入到输出的闭环。
+中间展示 JSON 结构：
+
+```text
+metadata:
+slug / title / pdfPath / notePath / completed / updatedAt
+
+sections:
+1. Introduction      pending
+2. Method            done
+3. Experiments       pending
+```
+
+右侧展示更新流程：
+
+```text
+read_paper -> create all sections as pending
+read_paper_section -> load one pending section, no write
+record_paper_section_note -> mark section done + save note
+all done -> completed=true
+```
+
+视觉重点：
+
+- 用 checkbox 或状态标签表示 section 的 `pending / done`。
+- 强调 `read_paper_section` 是只读加载，不会推进进度。
+- 强调 `record_paper_section_note` 才是推进阅读进度的写入点。
+- 同时画出 Markdown note，表示它会同步更新 Reading Plan。
 
 ---
 
-## Slide 16: 这套基座的价值
+## Slide 13: Knowledge Index 的数据结构
 
-我认为 clawbot 基座的价值主要有三点。
+### PPT展示文字
 
-第一，它把输入输出、Agent 生命周期、工具执行、长期记忆和业务技能分开了。每个模块职责比较清楚。
+讲完基础 search 和 reading 后，再看 paperClaw 的长期论文知识层：`knowledge-index`。
 
-第二，它让业务能力可以插件化挂载。后面 paper 包里的论文搜索、PDF 阅读、知识图谱维护，本质上都是通过 Tool 和 Skill 接到这个基座上的。
+它的文件位置是：
 
-第三，它把可靠性问题前置到了框架层。比如 session 持久化、上下文压缩、工具错误包装、命令短路，都不需要每个业务工具重复实现。
+```text
+paperclaw-store/knowledge-index.json
+```
 
-所以 paperClaw 不是直接写一个“论文搜索脚本”，而是先做了一个可扩展的对话式 Agent 基座，再把论文阅读能力放到这个基座上运行。
+它不是论文全文库，也不是向量数据库，而是一个轻量 JSON 索引。
+
+核心结构只有两类：
+
+1. **PaperNode：论文节点**
+   - `id`：论文 slug。
+   - `title`：论文标题。
+   - `summary_short`：短摘要。
+   - `note_path`：对应 Markdown note 的路径。
+   - `arxiv_id`：可选 arXiv id。
+   - `status`：`unread` / `reading` / `read` / `skipped`。
+   - `key_terms`：闭合词表中的关键词，最多 5 个。
+
+2. **PaperLink：论文关系**
+   - `paper_ids`：两篇论文组成的无向关系。
+   - `reason`：为什么这两篇论文有关。
+   - `shared_terms`：它们共享的关键词。
+   - `evidence`：证据指针，指向 note path 或 section。
+
+这里最重要的设计取舍是：
+
+```text
+Markdown Note 保存单篇论文细节；
+Knowledge Index 只保存导航信息、短摘要、关键词和论文关系。
+```
+
+这样模型不需要每次打开所有笔记，也能先知道“读过哪些论文、它们讲什么、彼此怎么关联”。
+
+### 图片生成说明
+
+请生成一张 Knowledge Index 数据结构图。
+
+图中包含：
+
+```text
+knowledge-index.json
+  -> papers: Record<string, PaperNode>
+  -> links: PaperLink[]
+```
+
+PaperNode 展示字段：
+
+```text
+id / title / summary_short / note_path / arxiv_id / status / key_terms
+```
+
+PaperLink 展示字段：
+
+```text
+paper_ids / reason / shared_terms / evidence
+```
+
+再画出外部关系：
+
+```text
+PaperNode.note_path -> Markdown Note
+PaperLink.evidence -> Note / Section
+```
+
+视觉重点：
+
+- `knowledge-index.json` 放在中心。
+- 左侧是多个 paper node，右侧是 node 之间的 link。
+- Markdown note 放在图的下方，表示详细内容不在 index 里。
+- 突出“轻量索引 / 导航层 / 证据指针”。
 
 ---
 
-## Slide 17: 过渡到 paper 包
+## Slide 14: 给 LLM 使用 Knowledge Index 的工具
 
-讲完 clawbot 基座后，下一部分就可以讲 paper 包。
+### PPT展示文字
 
-paper 包不是重新实现一套 Agent，而是在基座上挂载论文阅读相关能力：
+`knowledge-index` 本身只是 JSON 文件。为了让 LLM 能稳定使用它，paperClaw 给它配了一组结构化 tools。
 
-1. 论文搜索工具。
-2. PDF 下载工具。
-3. 分章节阅读工具。
-4. 笔记写入工具。
-5. 用户 profile 更新。
-6. 论文知识图谱维护。
+这些工具分成两类。
 
-也就是说，clawbot 提供通用 Agent 框架，paper 包提供面向论文场景的具体工具和技能。
+**第一类：只读查询工具**
 
-这就是整个项目的分层关系。
+- `kg_get_node`：按 id 读取一篇论文节点，只返回元数据，不读取 note 全文。
+- `kg_recent_nodes`：列出最近更新的论文节点，常用于找最近读过什么。
+- `kg_neighbors`：查某篇论文的一跳邻居。
+- `kg_get_link`：读取一条论文关系，包含 reason 和 evidence pointer。
+- `kg_search_nodes`：按 title、summary、status、key_terms 搜论文节点。
+- `kg_search_links`：按 query、source、target、shared terms 搜关系。
+- `preview_section_relations`：给当前阅读 section 做只读关联预览。
+
+**第二类：写入维护工具**
+
+- `kg_upsert_node`：创建或更新论文节点。
+- `kg_upsert_link`：创建或更新两篇论文之间的关系。
+- `kg_update_link`：修改关系 reason、shared_terms 或 evidence。
+- `kg_delete_link`：删除一条关系。
+- `consolidate_paper`：把一篇已完成的 note 提炼成 `summary_short`、`key_terms`，并自动生成最多 5 条关系。
+
+这里的安全边界是：
+
+```text
+查询工具只读；写入工具需要明确用户意图，或者来自固定自动触发点。
+```
+
+这样 LLM 不是直接自由编辑 JSON，而是通过受控工具读写 knowledge index。
+
+### 图片生成说明
+
+请生成一张 Knowledge Tools 分层图。
+
+中心节点：
+
+```text
+LLM / AgentRunner
+```
+
+向右连接：
+
+```text
+Knowledge Tools
+  -> Read-only Tools
+  -> Write Tools
+  -> PaperKnowledgeStore
+  -> paperclaw-store/knowledge-index.json
+```
+
+Read-only Tools 展示：
+
+```text
+kg_get_node / kg_recent_nodes / kg_neighbors / kg_search_nodes / kg_search_links / preview_section_relations
+```
+
+Write Tools 展示：
+
+```text
+kg_upsert_node / kg_upsert_link / kg_update_link / kg_delete_link / consolidate_paper
+```
+
+视觉重点：
+
+- 用不同颜色区分 read-only 和 write tools。
+- write tools 旁边标注“confirmation / fixed trigger”。
+- 强调 LLM 通过 tools 访问 index，不直接改 JSON 文件。
+
+---
+
+## Slide 15: Knowledge Index 如何作用于 Reading
+
+### PPT展示文字
+
+先看 reading 流程怎么使用 knowledge-index。
+
+reading 里有两类动作：一类是更新 knowledge-index，另一类是在进入 section 时读取 knowledge-index。
+
+**第一类：更新 knowledge-index**
+
+1. `read_paper` 启动后：
+   - 工具：`read_paper` 内部调用 `PaperKnowledgeStore.upsertNode()`。
+   - 做什么：创建或更新当前论文的 paper node。
+   - 状态：写成 `reading`。
+   - 意义：系统知道“这篇论文已经进入阅读流程”，但还没有读完。
+
+2. `record_paper_section_note` 保存章节笔记后：
+   - 工具：`record_paper_section_note` 内部继续更新 paper node。
+   - 做什么：同步阅读进度。
+   - 如果整篇还没读完，节点仍然是 `reading`。
+   - 如果所有 sections 都完成，节点状态变成 `read`。
+
+3. 整篇读完后：
+   - 工具：consolidation 逻辑。
+   - 做什么：从 Markdown note 中提炼 `summary_short` 和 `key_terms`。
+   - 还会根据共享 key terms 和 LLM 判断，自动创建最多 5 条 PaperLink。
+
+**第二类：进入 section 时读取 knowledge-index**
+
+当 `read_paper_section` 加载一个 section 后，Agent 会调用 `preview_section_relations`。
+
+它做的事情是：
+
+1. 从当前 section 的标题和正文里提取闭合 `key_terms`。
+2. 用这些 key terms 去 knowledge-index 里匹配旧论文节点。
+3. 如果找到相关论文，就返回少量候选关系。
+4. 主 Agent 只挑 1-2 篇真正有帮助的旧论文，作为类比、证据或反例嵌入讲解。
+
+所以 reading 中的 knowledge-index 不是额外报告，而是辅助讲解当前 section：
+
+```text
+当前 section -> key_terms -> related old papers -> 更有上下文的讲解
+```
+
+### 图片生成说明
+
+请生成一张 Knowledge Index 在 Reading 中的读写流程图。
+
+主流程分成上下两条：
+
+```text
+写入路径:
+read_paper -> upsert node(status=reading)
+record_paper_section_note -> update progress
+all sections done -> node(status=read)
+completed note -> consolidation -> summary_short / key_terms / PaperLinks
+```
+
+```text
+读取路径:
+read_paper_section -> current section
+current section -> preview_section_relations
+preview_section_relations -> key_terms
+key_terms -> Knowledge Index
+Knowledge Index -> related old papers
+related old papers -> Agent teaching
+```
+
+视觉重点：
+
+- `Knowledge Index` 放在中间。
+- 上方用写入箭头表示 reading progress 和 consolidation。
+- 下方用读取箭头表示 section relation preview。
+- 强调 relation preview 是“辅助当前 section 讲解”，不是单独输出 bibliography。
+
+---
+
+## Slide 16: Knowledge Index 如何作用于 Search
+
+### PPT展示文字
+
+再看 search 流程怎么使用 knowledge-index。
+
+基础搜索只依赖用户 query：
+
+```text
+User Query -> paper_search -> arXiv -> shortlist
+```
+
+但当系统启用 `source = "knowledge"` 或 `source = "hybrid"` 时，`paper_search` 会先从 knowledge-index 构造一段本地阅读上下文。
+
+它的步骤是：
+
+1. 读取最近已读论文。
+   - 工具逻辑：`PaperKnowledgeStore.recentNodes({ status: ["read"] })`。
+   - 作用：找到一个最近的阅读锚点。
+
+2. 读取这个锚点的一跳邻居。
+   - 工具逻辑：`PaperKnowledgeStore.neighbors()`。
+   - 作用：知道这篇论文和哪些旧论文有关，以及共享哪些 key terms。
+
+3. 构造 knowledge search context。
+   - 里面包含：最近论文标题、key terms、短摘要、相关旧论文、关系原因。
+   - 这段上下文会变成新的搜索意图。
+
+4. 合并用户 query。
+   - `source = "knowledge"`：主要使用本地知识图谱上下文。
+   - `source = "hybrid"`：把用户 query 和本地知识图谱上下文合并。
+
+5. 排除已经读过或已在邻居中的 arXiv id。
+   - 作用：避免反复推荐已经进入知识库的论文。
+
+所以 search 中的 knowledge-index 主要提供两件事：
+
+```text
+推荐上下文 + 去重依据
+```
+
+### 图片生成说明
+
+请生成一张 Knowledge Index 在 Search 中的作用流程图。
+
+主流程：
+
+```text
+Knowledge Index
+  -> recent read paper
+  -> one-hop neighbors
+  -> knowledge search context
+  -> paper_search(source=knowledge/hybrid)
+  -> arXiv Search
+  -> Shortlist
+```
+
+旁边加一条去重路径：
+
+```text
+Knowledge Index -> read / neighbor arXiv ids -> exclude list -> paper_search
+```
+
+视觉重点：
+
+- `Knowledge Index` 放在左侧，`paper_search` 放在中间，`Shortlist` 放在右侧。
+- 用一条主箭头表示“本地知识生成推荐 query”。
+- 用一条辅助箭头表示“排除已读/已关联论文”。
+- 最后可以用一句话标注：读过的论文越多，search 越个性化。
