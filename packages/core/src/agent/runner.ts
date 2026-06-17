@@ -17,6 +17,7 @@ const MAX_LENGTH_RECOVERIES = 3;
 const MICROCOMPACT_KEEP_RECENT = 10;
 const MICROCOMPACT_MIN_CHARS = 500;
 const TOOL_RESULT_DEFAULT_MAX_CHARS = 12_000;
+const TOOL_EXECUTION_DEFAULT_TIMEOUT_MS = 120_000;
 const CONTEXT_SAFETY_BUFFER = 256;
 
 /**
@@ -45,6 +46,8 @@ export interface AgentRunSpec {
   maxTokens?: number;
   /** 单条 tool result 的最大保留字符数，超过后只给模型看摘要。 */
   maxToolResultChars?: number;
+  /** 默认单个 tool call 执行超时，tool.timeoutMs 可覆盖。 */
+  toolTimeoutMs?: number;
   /** 是否允许并发执行 concurrency-safe 的工具。 */
   concurrentTools?: boolean;
   /** 运行时 checkpoint 回调，由外层决定是否持久化到 Session.metadata。 */
@@ -120,6 +123,7 @@ export interface RunnerConfig {
   temperature?: number;
   maxTokens?: number;
   maxToolResultChars?: number;
+  toolTimeoutMs?: number;
   concurrentTools?: boolean;
   checkpointCallback?: (payload: AgentCheckpoint) => void | Promise<void>;
   maxIterationsMessage?: string;
@@ -393,7 +397,13 @@ export class AgentRunner {
       iter: iteration,
     });
 
-    const result = await spec.tools.execute(toolCall.name, toolCall.arguments);
+    const tool = spec.tools.get(toolCall.name);
+    const timeoutMs = tool?.timeoutMs ?? spec.toolTimeoutMs ?? TOOL_EXECUTION_DEFAULT_TIMEOUT_MS;
+    const result = await withToolTimeout(
+      spec.tools.execute(toolCall.name, toolCall.arguments),
+      toolCall.name,
+      timeoutMs,
+    );
     const content = this.normalizeToolResult(spec, toolCall.id, toolCall.name, result);
 
     // OpenAI/DeepSeek 风格协议要求 tool result 使用 tool_call_id 绑定上一条 assistant tool_call。
@@ -647,6 +657,7 @@ export async function runToolLoop(
     temperature: config.temperature,
     maxTokens: config.maxTokens,
     maxToolResultChars: config.maxToolResultChars,
+    toolTimeoutMs: config.toolTimeoutMs,
     concurrentTools: config.concurrentTools,
     checkpointCallback: config.checkpointCallback,
     maxIterationsMessage: config.maxIterationsMessage,
@@ -702,6 +713,35 @@ function accumulateUsage(
 function isBlank(value: string | undefined | null): boolean {
   // 空字符串、undefined、纯空白都视作空回复。
   return !value || value.trim().length === 0;
+}
+
+async function withToolTimeout(
+  promise: Promise<ToolResult>,
+  toolName: string,
+  timeoutMs: number,
+): Promise<ToolResult> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return await promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<ToolResult>((resolve) => {
+        timer = setTimeout(() => {
+          const summary = `Tool "${toolName}" timed out after ${timeoutMs}ms.`;
+          resolve({
+            success: false,
+            data: {
+              error: summary,
+              guidance: 'Report the timeout to the user and ask them to retry or narrow the request.',
+            },
+            summary,
+          });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function toolNameByCallId(messages: ChatMessage[]): Map<string, string> {

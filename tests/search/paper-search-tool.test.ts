@@ -11,9 +11,9 @@ import {
   type ShortlistItem,
 } from '../../packages/paper/src/index.js';
 import type { ArxivCandidate } from '../../packages/paper/src/search/tools/arxiv.js';
-import type { DownloadResult } from '../../packages/paper/src/search/tools/download.js';
+import { downloadPdf, type DownloadResult } from '../../packages/paper/src/search/tools/download.js';
 import { assert, MockLLM, withTempDir } from '../fixtures/index.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 
 const candidates: ArxivCandidate[] = [
   {
@@ -44,6 +44,8 @@ const candidates: ArxivCandidate[] = [
     published: '2024-01-03T00:00:00Z',
   },
 ];
+
+const validPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
 async function testPaperSearchAndDownloadHandoff(): Promise<void> {
   await withTempDir(async (dir) => {
@@ -169,9 +171,97 @@ async function testPaperSearchKnowledgeSourceBuildsQueryInsidePaperPackage(): Pr
   });
 }
 
+async function testDownloadRejectsCorruptCacheAndWritesAtomically(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const outputDir = join(dir, 'pdfs');
+    await mkdir(outputDir, { recursive: true });
+    const outPath = join(outputDir, '2604.08224.pdf');
+    await writeFile(outPath, Buffer.alloc(2048, 'x'));
+    let fetches = 0;
+
+    const result = await downloadPdf('2604.08224', outputDir, {
+      fetchFn: async () => {
+        fetches++;
+        return new Response(validPdf, {
+          status: 200,
+          headers: {
+            'content-type': 'application/pdf',
+            'content-length': String(validPdf.length),
+          },
+        });
+      },
+    });
+
+    assert(result.ok === true, 'download succeeds after corrupt cache is rejected');
+    assert(fetches === 1, 'corrupt cache does not skip fetch');
+    assert((await readFile(outPath)).equals(validPdf), 'final PDF is replaced with validated download');
+    await assertMissing(`${outPath}.partial`, 'partial file is removed after successful rename');
+
+    const cached = await downloadPdf('2604.08224', outputDir, {
+      fetchFn: async () => {
+        fetches++;
+        return new Response(validPdf, { status: 200 });
+      },
+    });
+    assert(cached.ok === true, 'validated PDF becomes a cache hit');
+    assert(fetches === 1, 'validated cache skips fetch');
+  });
+}
+
+async function testDownloadCleansPartialOnIncompleteBody(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const outputDir = join(dir, 'pdfs');
+    await mkdir(outputDir, { recursive: true });
+    const outPath = join(outputDir, '2501.00001.pdf');
+    const truncated = validPdf.subarray(0, validPdf.length - 8);
+
+    const result = await downloadPdf('2501.00001', outputDir, {
+      fetchFn: async () => new Response(truncated, {
+        status: 200,
+        headers: {
+          'content-type': 'application/pdf',
+          'content-length': String(validPdf.length),
+        },
+      }),
+    });
+
+    assert(result.ok === false, 'incomplete body fails download');
+    assert(result.error?.includes('incomplete download') === true, 'failure explains byte mismatch');
+    await assertMissing(outPath, 'incomplete download is not promoted to final PDF');
+    await assertMissing(`${outPath}.partial`, 'partial file is cleaned after failure');
+  });
+}
+
+async function testDownloadTimesOut(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const outputDir = join(dir, 'pdfs');
+    await mkdir(outputDir, { recursive: true });
+
+    const result = await downloadPdf('2501.00002', outputDir, {
+      timeoutMs: 5,
+      fetchFn: async () => await new Promise<Response>(() => undefined),
+    });
+
+    assert(result.ok === false, 'hung fetch fails download');
+    assert(result.error?.includes('download timed out after 5ms') === true, 'timeout error is explicit');
+  });
+}
+
+async function assertMissing(path: string, message: string): Promise<void> {
+  try {
+    await access(path);
+    assert(false, message);
+  } catch (err) {
+    assert((err as NodeJS.ErrnoException).code === 'ENOENT', message);
+  }
+}
+
 async function main(): Promise<void> {
   await testPaperSearchAndDownloadHandoff();
   await testPaperSearchKnowledgeSourceBuildsQueryInsidePaperPackage();
+  await testDownloadRejectsCorruptCacheAndWritesAtomically();
+  await testDownloadCleansPartialOnIncompleteBody();
+  await testDownloadTimesOut();
   console.log('✓ paper search tool tests passed.');
 }
 

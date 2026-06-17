@@ -29,6 +29,8 @@ export interface Tool {
   concurrencySafe?: boolean;
   /** Whether this tool must run alone even if concurrent execution is enabled. */
   exclusive?: boolean;
+  /** Optional execution timeout in milliseconds. Falls back to the runner default. */
+  timeoutMs?: number;
   /** Scopes this tool is intended for. Missing means core. */
   scopes?: ToolScope[];
   /** Optional config key for future ToolLoader integration. */

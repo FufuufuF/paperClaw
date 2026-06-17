@@ -7,6 +7,7 @@ import {
   type AgentCheckpoint,
   type ChatMessage,
   type Tool,
+  type ToolResult,
 } from '../../packages/core/src/index.js';
 import { assert, MockLLM } from '../fixtures/index.js';
 
@@ -219,6 +220,34 @@ async function testConfirmationMetadataDoesNotBlockToolCall(): Promise<void> {
   assert(result.toolEvents[0]?.status === 'ok', 'tool event reports ok');
 }
 
+async function testToolTimeoutReturnsErrorToModel(): Promise<void> {
+  const slowTool: Tool = {
+    name: 'slow_tool',
+    description: 'never resolves',
+    parameters: { type: 'object', properties: {} },
+    timeoutMs: 5,
+    async execute() {
+      return await new Promise<ToolResult>(() => undefined);
+    },
+  };
+  const h = makeRunner(new ToolRegistry([slowTool]));
+  h.llm.enqueue(
+    {
+      text: 'Calling slow tool.',
+      toolCalls: [{ id: 'call_slow', name: 'slow_tool', arguments: '{}' }],
+      usage: { input: 10, output: 4 },
+    },
+    { text: '工具超时了，请稍后重试。', usage: { input: 12, output: 6 } },
+  );
+
+  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: 'run slow tool' }]));
+  const toolContent = result.newTurns.find((turn) => turn.role === 'tool')?.content ?? '';
+
+  assert(toolContent.includes('timed out after 5ms'), 'tool timeout is serialized for LLM');
+  assert(result.toolEvents[0]?.status === 'error', 'timed out tool reports error');
+  assert(result.text.includes('超时'), 'model can respond after tool timeout');
+}
+
 async function main(): Promise<void> {
   await testFinalResponse();
   await testToolCallExecution();
@@ -229,6 +258,7 @@ async function main(): Promise<void> {
   await testDropOrphanToolResults();
   await testLengthRecovery();
   await testConfirmationMetadataDoesNotBlockToolCall();
+  await testToolTimeoutReturnsErrorToModel();
   console.log('✓ runner tests passed.');
 }
 
