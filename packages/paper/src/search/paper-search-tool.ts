@@ -117,7 +117,7 @@ export function createPaperSearchTool(opts: PaperSearchToolOpts & { state: Paper
 export function createDownloadPaperTool(opts: PaperSearchToolOpts & { state: PaperSearchState }): Tool {
   return {
     name: 'download_paper',
-    description: 'Download arXiv PDFs by arXiv id, or by 1-based indexes from the latest paper_search shortlist. Use only when the user explicitly asks to download/save PDFs.',
+    description: 'Download arXiv PDFs by arXiv id, or by 1-based indexes from the latest paper_search shortlist. Use only when the user explicitly asks to download/save PDFs. Do not use this when the user has already provided a local PDF path or asks to read an existing PDF; call read_paper instead.',
     readOnly: false,
     concurrencySafe: false,
     exclusive: true,
@@ -140,8 +140,11 @@ export function createDownloadPaperTool(opts: PaperSearchToolOpts & { state: Pap
       if (ids.length === 0) {
         return {
           success: false,
-          data: { error: 'No arXiv ids or shortlist indexes were provided.' },
-          summary: 'download_paper missing ids',
+          data: {
+            error: 'No arXiv ids or shortlist indexes were provided.',
+            guidance: 'Ask the user which arXiv ids or shortlist indexes to download. If the user provided a local PDF path, call read_paper with pdfPath instead.',
+          },
+          summary: 'download_paper missing ids; ask for ids/indexes or use read_paper for a local PDF path',
         };
       }
       const outputDir = guardedOutputDir(ctx, opts.outputDir, 'pdfs');

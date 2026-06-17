@@ -121,7 +121,7 @@ export function createReaderTools(opts: ReaderToolOpts): Tool[] {
 export function createReadPaperTool(opts: ReaderToolOpts): Tool {
   return {
     name: 'read_paper',
-    description: 'Start a guided paper reading session for a local PDF: extract text, split it into sections, and create a markdown note scaffold. It does not summarize the whole paper at once.',
+    description: 'Start a guided paper reading session for a local PDF: extract text, split it into sections, and create a markdown note scaffold. Use this directly when the user provides a local pdfPath or asks to read an existing PDF; do not call download_paper first in that case. It does not summarize the whole paper at once.',
     readOnly: false,
     concurrencySafe: false,
     exclusive: true,

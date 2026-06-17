@@ -34,9 +34,8 @@ export interface Tool {
   /** Optional config key for future ToolLoader integration. */
   configKey?: string;
   /**
-   * Side-effecting tools can require an explicit user intent in the current
-   * turn. AgentRunner enforces this before executing the tool, so prompt drift
-   * cannot silently perform writes or other side effects.
+   * Prompt/documentation metadata for side-effecting tools. AgentRunner does
+   * not enforce these patterns; the model's tool call is the execution intent.
    */
   confirmation?: {
     required: boolean;

@@ -6,7 +6,7 @@ import {
   estimateTokens,
 } from './context.js';
 import type { ToolRegistry } from './tools/registry.js';
-import type { Tool, ToolResult } from './tools/types.js';
+import type { ToolResult } from './tools/types.js';
 
 export const BACKFILL_TOOL_RESULT_CONTENT = '[Tool result unavailable - call was interrupted or lost]';
 export const EMPTY_FINAL_RESPONSE_MESSAGE = '[模型返回了空回复, 请重试或换一种问法.]';
@@ -393,10 +393,7 @@ export class AgentRunner {
       iter: iteration,
     });
 
-    // Side-effecting tools must have explicit user intent in the current turn.
-    const tool = spec.tools.get(toolCall.name);
-    const confirmationError = tool ? confirmationFailure(tool, messagesForModel) : null;
-    const result = confirmationError ?? await spec.tools.execute(toolCall.name, toolCall.arguments);
+    const result = await spec.tools.execute(toolCall.name, toolCall.arguments);
     const content = this.normalizeToolResult(spec, toolCall.id, toolCall.name, result);
 
     // OpenAI/DeepSeek 风格协议要求 tool result 使用 tool_call_id 绑定上一条 assistant tool_call。
@@ -705,36 +702,6 @@ function accumulateUsage(
 function isBlank(value: string | undefined | null): boolean {
   // 空字符串、undefined、纯空白都视作空回复。
   return !value || value.trim().length === 0;
-}
-
-function confirmationFailure(tool: Tool, messages: ChatMessage[]): ToolResult | null {
-  const rule = tool.confirmation;
-  if (!rule?.required) return null;
-  const userText = recentUserText(messages);
-  const confirmed = rule.patterns.some((pattern) => new RegExp(pattern, 'i').test(userText));
-  if (confirmed) return null;
-  const summary = `Tool "${tool.name}" requires explicit user confirmation for ${rule.action}.`;
-  return {
-    success: false,
-    data: {
-      error: summary,
-      guidance: rule.guidance,
-      required_action: rule.action,
-    },
-    summary,
-  };
-}
-
-function recentUserText(messages: ChatMessage[]): string {
-  for (let idx = messages.length - 1; idx >= 0; idx--) {
-    const message = messages[idx]!;
-    if (message.role === 'user') return stripRuntimeContext(message.content);
-  }
-  return '';
-}
-
-function stripRuntimeContext(text: string): string {
-  return text.replace(/\[Runtime Context[\s\S]*?\[\/Runtime Context\]/g, '');
 }
 
 function toolNameByCallId(messages: ChatMessage[]): Map<string, string> {

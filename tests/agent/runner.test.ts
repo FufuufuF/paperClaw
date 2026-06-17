@@ -184,72 +184,39 @@ async function testLengthRecovery(): Promise<void> {
   assert(result.newTurns.map((t) => t.role).join(',') === 'assistant,assistant', 'synthetic recovery prompt is not persisted as user turn');
 }
 
-async function testConfirmationGateBlocksSideEffectTool(): Promise<void> {
+async function testConfirmationMetadataDoesNotBlockToolCall(): Promise<void> {
   let executed = false;
-  const dangerousTool: Tool = {
-    name: 'dangerous_download',
+  const readTool: Tool = {
+    name: 'read_paper',
     description: 'test side-effect tool',
     parameters: { type: 'object', properties: {} },
     confirmation: {
       required: true,
-      action: 'download PDFs',
-      patterns: ['下载', 'download'],
-      guidance: 'Ask before downloading.',
+      action: 'start guided reading',
+      patterns: ['阅读\\s*(论文|paper|pdf)', 'read\\s*(paper|pdf)'],
+      guidance: 'Ask before reading.',
     },
     async execute() {
       executed = true;
-      return { success: true, data: { ok: true } };
+      return { success: true, data: { ok: true }, summary: 'guided reading started' };
     },
   };
-  const h = makeRunner(new ToolRegistry([dangerousTool]));
+  const h = makeRunner(new ToolRegistry([readTool]));
   h.llm.enqueue(
     {
-      text: 'I will download it.',
-      toolCalls: [{ id: 'call_download', name: 'dangerous_download', arguments: '{}' }],
+      text: 'Starting.',
+      toolCalls: [{ id: 'call_read', name: 'read_paper', arguments: '{}' }],
       usage: { input: 10, output: 4 },
     },
-    { text: '请确认是否下载 PDF。', usage: { input: 12, output: 6 } },
+    { text: '已开始 guided reading。', usage: { input: 12, output: 6 } },
   );
 
-  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: '帮我找一篇 agent 论文' }]));
+  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: '是的, 开始' }]));
   const toolContent = result.newTurns.find((turn) => turn.role === 'tool')?.content ?? '';
 
-  assert(executed === false, 'confirmation gate blocks side-effect tool execution');
-  assert(toolContent.includes('requires explicit user confirmation'), 'blocked tool result explains confirmation requirement');
-  assert(result.text.includes('确认'), 'model can ask for confirmation after blocked tool');
-}
-
-async function testConfirmationGateAllowsExplicitIntent(): Promise<void> {
-  let executed = false;
-  const dangerousTool: Tool = {
-    name: 'dangerous_download',
-    description: 'test side-effect tool',
-    parameters: { type: 'object', properties: {} },
-    confirmation: {
-      required: true,
-      action: 'download PDFs',
-      patterns: ['下载', 'download'],
-      guidance: 'Ask before downloading.',
-    },
-    async execute() {
-      executed = true;
-      return { success: true, data: { ok: true }, summary: 'downloaded' };
-    },
-  };
-  const h = makeRunner(new ToolRegistry([dangerousTool]));
-  h.llm.enqueue(
-    {
-      text: 'Downloading.',
-      toolCalls: [{ id: 'call_download', name: 'dangerous_download', arguments: '{}' }],
-      usage: { input: 10, output: 4 },
-    },
-    { text: '已下载。', usage: { input: 12, output: 6 } },
-  );
-
-  const result = await h.runner.run(baseSpec(h, [{ role: 'user', content: '请下载第 1 篇 PDF' }]));
-
-  assert(executed === true, 'confirmation gate allows explicit download intent');
-  assert(result.toolEvents[0]?.status === 'ok', 'allowed side-effect tool reports ok');
+  assert(executed === true, 'confirmation metadata does not block model-selected tool execution');
+  assert(toolContent.includes('"success":true'), 'tool result is serialized for LLM');
+  assert(result.toolEvents[0]?.status === 'ok', 'tool event reports ok');
 }
 
 async function main(): Promise<void> {
@@ -261,8 +228,7 @@ async function main(): Promise<void> {
   await testMessageGovernanceRepairsModelContextOnly();
   await testDropOrphanToolResults();
   await testLengthRecovery();
-  await testConfirmationGateBlocksSideEffectTool();
-  await testConfirmationGateAllowsExplicitIntent();
+  await testConfirmationMetadataDoesNotBlockToolCall();
   console.log('✓ runner tests passed.');
 }
 
