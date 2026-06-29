@@ -61,6 +61,8 @@ export interface ProviderSnapshot {
   provider: ProviderName;
   model: string;
   contextWindowTokens: number;
+  maxTokens: number;
+  temperature: number;
   signature: readonly unknown[];
 }
 
@@ -84,6 +86,8 @@ export function buildProviderSnapshot(config: PaperClawConfig): ProviderSnapshot
     provider: preset.provider,
     model: providerConfig.model ?? preset.model,
     contextWindowTokens: preset.contextWindowTokens,
+    maxTokens: preset.maxTokens,
+    temperature: preset.temperature,
     signature: providerSignature(preset, providerConfig),
   };
 }

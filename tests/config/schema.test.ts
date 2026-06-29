@@ -76,11 +76,55 @@ async function testLoadConfig(): Promise<void> {
   });
 }
 
+async function testEnvProviderOverrides(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const cfg = loadConfig({
+      repoRoot: dir,
+      env: {
+        PAPERCLAW_PROVIDER: 'openai',
+        OPENAI_API_KEY: 'sk-openai',
+        PAPERCLAW_MODEL: 'gpt-test',
+        PAPERCLAW_CONTEXT_WINDOW_TOKENS: '128000',
+        PAPERCLAW_MAX_TOKENS: '4096',
+        PAPERCLAW_TEMPERATURE: '0.1',
+      },
+    });
+
+    assert(cfg.agents.defaults.provider === 'openai-compatible', 'openai env alias selects OpenAI-compatible provider');
+    assert(cfg.agents.defaults.model === 'gpt-test', 'env model overrides agent default');
+    assert(cfg.providers.openaiCompatible.apiKey === 'sk-openai', 'openai api key alias is read');
+    assert(cfg.providers.openaiCompatible.apiBase === 'https://api.openai.com', 'openai api base default is set');
+    assert(cfg.providers.openaiCompatible.model === 'gpt-test', 'provider model follows env model');
+    assert(cfg.agents.defaults.contextWindowTokens === 128000, 'context window env override parsed');
+    assert(cfg.agents.defaults.maxTokens === 4096, 'max tokens env override parsed');
+    assert(cfg.agents.defaults.temperature === 0.1, 'temperature env override parsed');
+  });
+}
+
+async function testDeepSeekEnvCompatibility(): Promise<void> {
+  await withTempDir(async (dir) => {
+    const cfg = loadConfig({
+      repoRoot: dir,
+      env: {
+        DEEPSEEK_API_KEY: 'sk-deepseek',
+        DEEPSEEK_MODEL: 'deepseek-reasoner',
+      },
+    });
+
+    assert(cfg.agents.defaults.provider === 'deepseek', 'deepseek remains the default provider');
+    assert(cfg.agents.defaults.model === 'deepseek-reasoner', 'deepseek model env alias is read');
+    assert(cfg.providers.deepseek.apiKey === 'sk-deepseek', 'deepseek api key remains compatible');
+    assert(cfg.providers.deepseek.model === 'deepseek-reasoner', 'deepseek provider model is set');
+  });
+}
+
 async function main(): Promise<void> {
   await testDefaults();
   await testMergeAndValidate();
   await testEnvResolution();
   await testLoadConfig();
+  await testEnvProviderOverrides();
+  await testDeepSeekEnvCompatibility();
   console.log('✓ config schema tests passed.');
 }
 
