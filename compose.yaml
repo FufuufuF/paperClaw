@@ -1,0 +1,16 @@
+services:
+  paperclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paperclaw:local
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    environment:
+      PAPERCLAW_STORE_DIR: /data
+      PAPERCLAW_CLI_UI: ${PAPERCLAW_CLI_UI:-plain}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./paperclaw-store:/data
