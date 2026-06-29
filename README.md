@@ -1,296 +1,101 @@
 # paperClaw
 
-> 数据挖掘期末项目 · 2026 春  
-> 主题: 一个面向论文阅读和个人知识库构建的 AI Agent
+## 1. 如何安装依赖
 
-## 1. 这个项目是做什么的?
+本地运行需要 Node.js 20+ 和 pnpm。
 
-paperClaw 是一个帮助用户读论文、整理笔记、积累个人知识库的 AI Agent。
-
-它的使用方式很接近和一个论文助理聊天。用户可以直接用自然语言说:
-
-```text
-帮我找几篇 agent tool learning 方向的论文
-下载第 1、3 篇
-精读这篇 PDF
-继续读 Abstract
-把这一节的要点沉淀到笔记
-这篇论文和我之前读过的哪些论文有关?
+```bash
+pnpm install
 ```
 
-Agent 会自己判断该调用哪些工具，并把“搜索论文 → 下载 PDF → 带读论文 → 写笔记 → 更新个人知识库 → 发现论文之间的关系”串起来。
+也可以使用 Docker Compose，不需要在本机安装 Node / pnpm:
 
-一句话概括:
-
-```text
-paperClaw = 一个会检索、会带读、会写笔记、会维护长期知识库的论文阅读 Agent
+```bash
+docker compose build
 ```
 
-## 2. 为什么要做这个项目?
+Docker 镜像会安装运行所需的 Node、pnpm、SQLite native dependency 构建环境，以及 PDF 文本抽取依赖 `pdftotext`。
 
-普通论文搜索工具通常只能解决一个问题: 根据一个 query 找几篇论文。
+## 2. 如何配置大语言模型
 
-但真实的论文阅读过程不是一次性的。一个学生或研究者通常会遇到这些问题:
+项目默认使用 DeepSeek compatible API。先复制环境变量模板:
 
-- 搜到很多论文，但不知道哪些值得读。
-- 下载了 PDF，但没有时间系统精读。
-- 读完一篇后，笔记散落在各处，后面很难复用。
-- 读过的论文之间有什么联系，时间久了会忘。
-- 推荐系统不了解用户自己的本地笔记和研究兴趣。
-
-paperClaw 试图解决的是一个长期过程:
-
-```text
-第一次使用: 帮用户找到相关论文
-持续使用: 帮用户沉淀笔记和阅读偏好
-长期使用: 基于用户自己的论文库推荐和关联新论文
+```bash
+cp .env.example .env
 ```
 
-所以它不是“生成一篇综述”的工具，而是一个“持续积累个人论文知识库”的 agent 系统。
+然后编辑 `.env`，填入自己的 API Key:
 
-## 3. 用户能用它完成什么?
-
-### 3.1 搜索论文
-
-用户给一个自然语言方向，例如:
-
-```text
-我想找几篇 agent 方向、篇幅比较短的论文
+```env
+DEEPSEEK_API_KEY=sk-...
+PAPERCLAW_CLI_UI=plain
 ```
 
-paperClaw 会:
+本地运行时也可以手动创建 `.env`:
 
-1. 理解用户要找什么。
-2. 自动拆出合适的检索词。
-3. 去 arXiv 搜索候选论文。
-4. 阅读候选论文的标题和摘要。
-5. 筛掉不相关的论文。
-6. 给出一个 shortlist，并说明为什么推荐。
-
-用户看到的不是一堆原始搜索结果，而是经过初步筛选后的推荐列表。
-
-### 3.2 下载论文
-
-用户可以继续说:
-
-```text
-下载第 1、3 篇
+```bash
+echo "DEEPSEEK_API_KEY=sk-..." > .env
 ```
 
-paperClaw 会把对应 PDF 下载到本地目录:
+## 3. 如何准备或导入数据
+
+paperClaw 的运行态数据默认保存在项目根目录的 `paperclaw-store/`:
 
 ```text
-paperclaw-store/pdfs/
+paperclaw-store/
+  paperclaw.sqlite             session 历史与 memory history
+  pdfs/                        下载或导入的论文 PDF
+  profile.md                   用户阅读 profile
+  knowledge-index.json          论文关系图谱
+  memory/                       长期记忆文件
 ```
 
-这一步仍然需要用户确认，不会自动把所有搜索结果都下载下来。
+首次运行时不需要手动创建这些文件，系统会按需生成。
 
-### 3.3 精读论文
+导入已有数据时，可以把 PDF、Markdown 笔记、profile 或知识图谱文件复制到 `paperclaw-store/` 对应目录。
 
-用户可以提供 PDF 路径:
+导入本地 PDF 有两种方式:
 
 ```text
-精读 /path/to/paper.pdf
+方式 1: 放入 paperclaw-store/pdfs/，文件名使用 arXiv id，例如 2401.07324.pdf，然后在对话中说“精读 arXiv ID 2401.07324”
+方式 2: 直接在对话中提供 PDF 路径，例如“精读 /path/to/paper.pdf”
 ```
 
-paperClaw 不会直接把整篇论文囫囵吞枣总结掉，而是会:
-
-1. 抽取 PDF 文本。
-2. 把论文切分成 Abstract、Introduction、Method、Experiments 等章节。
-3. 生成一个阅读计划。
-4. 询问用户是否从某一节开始。
-5. 每次只加载一个章节，带用户逐节阅读。
-
-这样更接近真实精读过程: 先读 Abstract，再读 Introduction，再看 Method 和 Experiments。
-
-### 3.4 沉淀笔记
-
-每读完一节，用户可以说:
+使用 Docker Compose 时，宿主机的 `./paperclaw-store` 会挂载到容器内的 `/data`。例如宿主机文件:
 
 ```text
-把刚才这一节的要点沉淀到笔记
+paperclaw-store/pdfs/demo.pdf
 ```
 
-paperClaw 会把这一节的阅读结果写入 Markdown 笔记。笔记保存在:
+在容器内对应路径是:
 
 ```text
-paperclaw-store/<run_id>/papers/<paper_slug>.md
+/data/pdfs/demo.pdf
 ```
 
-这些笔记是普通 Markdown 文件，用户可以直接打开、修改、复制到汇报材料里。
+## 4. 如何启动系统
 
-### 3.5 维护个人 profile
-
-读完论文后，paperClaw 会更新:
-
-```text
-paperclaw-store/profile.md
-```
-
-这个文件记录用户已经读过哪些论文、对哪些方向感兴趣、哪些论文值得继续跟进。
-
-随着使用次数增加，paperClaw 对用户兴趣的理解会越来越强。
-
-### 3.6 构建论文关系图谱
-
-除了单篇笔记，paperClaw 还维护一个轻量知识索引:
-
-```text
-paperclaw-store/knowledge-index.json
-```
-
-它记录的不是论文全文，而是论文之间的关系。例如:
-
-```text
-论文 A 扩展了论文 B
-论文 A 和论文 B 使用了相同 benchmark
-论文 A 补充了论文 B 没有讨论的失败恢复问题
-论文 A 挑战了论文 B 的结论
-```
-
-这样以后用户问:
-
-```text
-这篇论文和我之前读过的哪些论文有关?
-```
-
-paperClaw 就可以先查关系图谱，再决定是否需要打开具体笔记。
-
-## 4. 一个完整使用流程示例
-
-下面是一个适合课堂展示的完整流程。
-
-### Step 1: 启动系统
+本地启动 CLI:
 
 ```bash
 pnpm chat
 ```
 
-进入命令行对话界面。
-
-### Step 2: 搜索论文
-
-用户:
-
-```text
-我现在想找一篇 agent tool learning 方向的短论文
-```
-
-paperClaw:
-
-- 调用论文搜索工具。
-- 返回若干候选论文。
-- 对每篇论文给出推荐理由。
-
-### Step 3: 下载论文
-
-用户:
-
-```text
-下载第 1 篇
-```
-
-paperClaw:
-
-- 下载 PDF。
-- 告诉用户 PDF 保存在什么位置。
-
-### Step 4: 开始精读
-
-用户:
-
-```text
-精读刚才下载的论文
-```
-
-paperClaw:
-
-- 抽取 PDF 文本。
-- 切分章节。
-- 生成阅读计划。
-- 创建 Markdown 笔记。
-- 在知识图谱里注册这篇论文。
-
-### Step 5: 逐节阅读
-
-用户:
-
-```text
-开始读 Abstract
-```
-
-paperClaw:
-
-- 只加载 Abstract。
-- 解释这一节在讲什么。
-- 帮用户提炼问题、方法和贡献。
-- 可以回答用户追问。
-
-### Step 6: 写入笔记
-
-用户:
-
-```text
-把这一节记录到笔记里
-```
-
-paperClaw:
-
-- 把这一节的阅读结果写入 Markdown。
-- 更新阅读进度。
-
-### Step 7: 发现和旧论文的关系
-
-用户:
-
-```text
-这篇和我之前读过的论文有什么关系?
-```
-
-paperClaw:
-
-- 查询知识图谱。
-- 找到可能相关的旧论文。
-- 说明关系类型和理由。
-- 如果用户确认，再把关系写入长期知识库。
-
-## 5. 系统整体架构
-
-可以把 paperClaw 理解成四层。
-
-```text
-┌──────────────────────────────┐
-│ 用户交互层                    │
-│ CLI 对话 / 未来可接 Feishu     │
-└───────────────┬──────────────┘
-                │
-┌───────────────▼──────────────┐
-│ Agent 决策层                  │
-│ 理解用户意图, 决定调用哪些工具 │
-└───────────────┬──────────────┘
-                │
-┌───────────────▼──────────────┐
-│ 工具能力层                    │
-│ 搜索 / 下载 / 精读 / 写笔记 / 图谱 │
-└───────────────┬──────────────┘
-                │
-┌───────────────▼──────────────┐
-│ 本地知识库层                  │
-│ PDF / Markdown notes / profile / knowledge index │
-└──────────────────────────────┘
-```
-
-### 5.1 用户交互层
-
-当前主要是命令行聊天:
+Docker Compose 启动 CLI:
 
 ```bash
-pnpm chat
+docker compose run --rm paperclaw
 ```
 
-用户不需要记复杂命令，只需要自然语言描述要做什么。
+退出 CLI:
 
-系统也提供了一些辅助命令:
+```text
+/exit
+```
+
+## 5. 如何使用主要功能
+
+常用命令:
 
 ```text
 /help       查看可用命令和工具
@@ -300,352 +105,52 @@ pnpm chat
 /cron run   手动触发论文推荐
 ```
 
-### 5.2 Agent 决策层
-
-这一层负责“想清楚下一步做什么”。
-
-例如用户说:
+主要功能示例:
 
 ```text
-找几篇小模型工具学习方向的论文
+我现在想找一篇 agent tool learning 方向的短论文
+下载第 1 篇
+精读刚才下载的论文
+开始读 Abstract
+把这一节记录到笔记里
+这篇和我之前读过的论文有什么关系?
 ```
 
-Agent 会判断这属于“论文检索”，于是调用搜索工具。
+运行过程中产生的数据会写入 `paperclaw-store/`，包括下载的 PDF、论文 Markdown 笔记、阅读进度、profile 和知识图谱。
 
-如果用户说:
+## 6. 如何复现实验结果或示例结果
 
-```text
-精读这个 PDF
-```
-
-Agent 会判断这属于“论文阅读”，于是调用精读工具。
-
-如果用户说:
-
-```text
-把这两篇的关系记下来
-```
-
-Agent 会判断这是“写入知识图谱”，并要求明确确认。
-
-### 5.3 工具能力层
-
-paperClaw 把具体能力拆成工具。这样做的好处是: Agent 负责决策，工具负责执行。
-
-主要工具类别:
-
-- 论文检索工具: 搜索 arXiv、筛选候选论文。
-- PDF 下载工具: 下载用户选中的论文。
-- 精读工具: 抽取 PDF 文本、切分章节、逐节读取。
-- 笔记工具: 创建、读取、编辑 Markdown 笔记。
-- 知识图谱工具: 查询和维护论文之间的关系。
-- 定时推荐工具: 根据已有阅读记录推荐新论文。
-
-### 5.4 本地知识库层
-
-paperClaw 的长期记忆不是只存在模型上下文里，而是落到本地运行态 store:
-
-```text
-paperclaw-store/
-  paperclaw.sqlite             基座 session 历史与 memory history
-  pdfs/                       下载的论文 PDF
-  <run_id>/papers/             论文 Markdown 笔记
-  <run_id>/reader-state/       逐节精读进度
-  profile.md                   用户阅读 profile
-  knowledge-index.json          论文关系图谱
-  memory/MEMORY.md              Dream 整理后的长期记忆
-  SOUL.md / USER.md             Dream 维护的行为与用户记忆
-```
-
-SQLite 只接管 clawbot 基座的 session transcript、compaction metadata、`memory/history` 和 dream cursor。SQLite 是本地文件数据库，不需要启动服务；运行时只是打开 `paperclaw.sqlite` 这个 DB handle。旧的 `sessions/*.json` 和 `memory/history.jsonl` 会在启动时导入 SQLite。
-
-paper 业务文件仍保持文件系统形态，包括 PDF、Markdown notes、reader state、`profile.md` 和 `knowledge-index.json`。prompt、template、skill 等 LLM 资源也继续用文件维护，方便人工查看、diff 和编辑。
-
-这个设计很重要:
-
-- 用户可以直接检查 paper 产物和 LLM 资源文件。
-- 课程汇报可以展示真实产物。
-- Agent 下次运行还能读取这些长期记忆。
-
-## 6. 和普通问答机器人的区别
-
-paperClaw 不是简单地把用户问题发给大模型。
-
-| 普通问答机器人 | paperClaw |
-|---|---|
-| 主要依赖当前对话上下文 | 有本地 notes、profile、knowledge index |
-| 通常一次性回答 | 可以多步调用工具完成任务 |
-| 不一定能真实下载或写文件 | 能下载 PDF、写 Markdown、维护 JSON 索引 |
-| 读长 PDF 容易上下文爆炸 | 逐节加载论文内容 |
-| 不知道用户过去读过什么 | 会积累用户阅读历史 |
-
-课程汇报时可以强调: paperClaw 的重点是“Agent + 工具 + 长期记忆”的组合，而不是单次问答。
-
-## 7. 关键设计思想
-
-### 7.1 不一次性吞掉整篇论文
-
-早期想法是让 Agent 读取 PDF 后直接生成整篇笔记。但这样有两个问题:
-
-- 长论文会占用大量上下文。
-- 用户没有参与阅读过程，得到的只是粗略总结。
-
-现在的设计是逐节阅读:
-
-```text
-读取一个 section → 讨论 → 用户确认 → 写入这一节笔记 → 再读下一节
-```
-
-这样更适合“精读”这个场景。
-
-### 7.2 Markdown 笔记是单篇论文的核心资产
-
-每篇论文的详细内容不放在知识图谱里，而是放在 Markdown note 中。
-
-原因:
-
-- Markdown 适合人阅读。
-- 方便课程汇报展示。
-- 用户可以手动修改。
-- Agent 需要细节时再按需读取。
-
-### 7.3 知识图谱只记录论文之间的关系
-
-`knowledge-index.json` 不复制论文正文，只记录关系:
-
-```text
-A complements B
-A extends B
-A uses_same benchmark as B
-A challenges B
-```
-
-这样可以避免知识库过大，也符合“渐进式暴露”的思想: 先看关系，再决定是否打开具体笔记。
-
-### 7.4 写入长期记忆要谨慎
-
-下载 PDF、写笔记、修改知识图谱都属于副作用操作。paperClaw 通过确认机制避免 Agent 自作主张。
-
-例如:
-
-- 搜索论文: 可以直接执行。
-- 读取笔记: 可以直接执行。
-- 写入笔记: 需要用户确认。
-- 写入正式论文关系: 需要用户确认。
-
-## 8. 课程汇报可以怎么讲?
-
-建议把汇报组织成这条主线:
-
-### 8.1 背景问题
-
-我们平时读论文时，不只是需要“找论文”，还需要:
-
-- 判断哪些论文值得读。
-- 精读并沉淀笔记。
-- 复用过去读过的内容。
-- 发现论文之间的关系。
-
-现有通用问答工具不能很好利用用户自己的本地笔记，因此我们做了 paperClaw。
-
-### 8.2 系统目标
-
-构建一个本地论文阅读 Agent，让它能:
-
-- 根据 query 搜索论文。
-- 下载用户选中的 PDF。
-- 带用户逐节阅读论文。
-- 自动维护 Markdown 笔记。
-- 更新用户阅读 profile。
-- 建立论文关系图谱。
-
-### 8.3 系统架构
-
-可以展示四层架构图:
-
-```text
-用户交互层 → Agent 决策层 → 工具能力层 → 本地知识库层
-```
-
-并说明:
-
-- Agent 决定调用什么工具。
-- 工具负责执行具体动作。
-- 本地文件保存长期记忆。
-
-### 8.4 Demo 展示
-
-建议现场展示或录屏:
-
-1. `/help` 查看工具列表。
-2. 搜索一批论文。
-3. 下载其中一篇。
-4. 启动精读，展示阅读计划。
-5. 读取 Abstract。
-6. 把 Abstract 笔记写入 Markdown。
-7. 查看生成的 note。
-8. 查询知识图谱节点或论文关系。
-
-### 8.5 技术亮点
-
-汇报时可以重点强调:
-
-- 不是固定 pipeline，而是对话式 agent。
-- Agent 能根据自然语言自主选择工具。
-- 工具分读写，副作用操作需要确认。
-- 精读采用逐节加载，解决长 PDF 上下文问题。
-- 长期记忆落到本地文件，而不是只存在模型上下文。
-- 知识图谱用于记录跨论文关系，支持后续推荐和比较。
-
-### 8.6 评估方式
-
-可以从三个角度评估:
-
-- 功能是否跑通: 搜索、下载、精读、写笔记、查图谱。
-- Agent 是否真的在多步推理: 能不能根据用户意图连续调用多个工具。
-- 知识库是否有用: 后续问题能不能利用已读笔记和论文关系。
-
-## 9. 如何启动项目?
-
-### 9.1 安装依赖
-
-```bash
-pnpm install
-```
-
-### 9.2 配置模型 API Key
-
-项目默认使用 DeepSeek compatible API。最小配置:
-
-```bash
-echo "DEEPSEEK_API_KEY=sk-..." > .env
-```
-
-也可以从模板开始配置其他 OpenAI-compatible 厂商:
-
-```bash
-cp .env-example .env
-```
-
-然后在 `.env` 里只打开一个 provider block，例如:
-
-```env
-PAPERCLAW_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-PAPERCLAW_MODEL=gpt-4o-mini
-```
-
-当前支持的 `.env` provider alias 包括 `deepseek`、`openai`、`openrouter`、`moonshot`、`dashscope`、`siliconflow`、`openai-compatible` 和 `custom`。
-
-### 9.3 启动聊天
-
-```bash
-pnpm chat
-```
-
-### 9.4 常用测试命令
+先运行基础检查:
 
 ```bash
 pnpm typecheck
 pnpm test
 ```
 
-## 10. 当前边界
+如果使用 Docker，先验证镜像可以构建和启动:
 
-当前版本已经可以支撑课程展示，但仍有一些边界:
-
-- PDF 必须有可抽取文本层；扫描版 PDF 暂时需要 OCR 或额外文本文件。
-- 知识图谱目前是轻量 JSON 文件，不是完整数据库。
-- Feishu 通道有基础实现，课程演示建议优先使用 CLI。
-- 论文关系发现目前以候选建议和用户确认写入为主，不追求完全自动化。
-
-## 11. 总结
-
-paperClaw 最重要的不是某一个单独功能，而是形成了一个闭环:
-
-```text
-搜索论文
-  → 下载 PDF
-  → 逐节精读
-  → 写入 Markdown 笔记
-  → 更新用户 profile
-  → 构建论文关系图谱
-  → 反过来帮助下一次搜索和阅读
+```bash
+docker compose build
+docker compose run --rm paperclaw
 ```
 
-这个闭环体现了课程项目想展示的重点: 一个 agent 如何通过工具调用和长期记忆完成复杂任务。
+进入 CLI 后，按下面脚本复现实验示例:
 
-## 12. 未完成内容与后续计划
+```text
+/status
+我现在想找一篇 agent tool learning 方向的短论文
+下载第 1 篇
+精读刚才下载的论文
+继续读下一节
+把这一节记录到笔记里
+/papers
+/profile
+```
 
-当前仓库已经具备最小可演示闭环，但以下功能还没有完全完成。
+由于搜索结果和大模型输出会受时间、模型版本和 arXiv 当前结果影响，文本内容不保证逐字一致。复现时主要检查这些结果是否出现:
 
-### 12.1 CLI 体验增强
-
-已完成 Ink 主 UI、plain fallback、状态栏、基础 loading、高亮和工具进度展示。
-
-后续还需要:
-
-- 优化 `/help`、`/status`、`/papers`、`/cost`、`/cron status` 的专门排版。
-- 优化长回答滚动和大段文本展示，避免输入区被长输出影响。
-- 对论文 shortlist、PDF 路径、note 路径做结构化组件展示。
-- 增加论文候选多选下载 UI。
-- 增加 `/verbose`、reasoning 开关、主题配置等高级控制。
-
-### 12.2 搜索与推荐质量
-
-已完成 arXiv 搜索、候选 triage、shortlist、下载 handoff 和 cron 推荐最小闭环。
-
-后续还需要:
-
-- 增加页数或 PDF 文本长度检测，减少“短论文”判断依赖模型猜测。
-- 更严格地区分“直接相关论文”和“方法论可迁移论文”。
-- 加强 cron 推荐的个性化解释和评估闭环。
-- 将搜索结果从纯文本编号升级为结构化 UI 渲染。
-
-### 12.3 精读、笔记与 Profile
-
-已完成 PDF 文本抽取、逐节阅读计划、section note 写入和 profile 基础更新。
-
-后续还需要:
-
-- 在整篇论文读完后自动生成综合总结和最终 verdict。
-- 支持多 section synthesis 和多论文比较。
-- 规范 section note 写入格式，避免笔记内部重复标题。
-- 增强 profile 的长期兴趣建模，而不只是基础读过索引和简单偏好。
-- 完成 `## 待问用户` 的交互式纠错闭环。
-
-### 12.4 知识图谱闭环
-
-已完成轻量 `knowledge-index.json`、节点/关系工具、pending link 工具和基础测试。
-
-后续还需要:
-
-- 在读完论文后自动提出候选论文关系。
-- 增加 pending links 的用户 review 和批量确认体验。
-- 让推荐结果更稳定地引用知识图谱关系作为解释依据。
-- 完善 cheap filter、rerank、consolidation 的关系发现流程。
-
-### 12.5 Agent 基座增强
-
-当前基座已经有 session、command、tool、provider、context、runner、channel 和 cron。
-
-后续还需要:
-
-- 完成 runtime checkpoint 的真正恢复闭环。
-- 支持 streaming 和 reasoning 输出。
-- 增强 provider fallback 策略。
-- 增加后台异步 subagent manager。
-- 评估并实现 `/goal` 长期目标、`/dream` 自动整理、history archive。
-- 评估 tool 自动 discovery 和 MCP 接入。
-- 评估 OpenAI-compatible API、Web UI、heartbeat 等非核心能力。
-
-### 12.6 Feishu 与部署体验
-
-已完成 Feishu webhook 文本通道、事件归一化、allowlist 和基础发送。
-
-后续还需要:
-
-- 将 Feishu 结果升级为 card 格式。
-- 增加按钮式确认下载、确认精读等交互。
-- 完善群聊 `@clawbot` 的使用体验。
-- 增加部署脚本、健康检查和日志查看能力。
+- 能返回论文候选 shortlist。
+- 能下载 PDF 到 `paperclaw-store/pdfs/`。
+- 能创建论文阅读计划和 Markdown 笔记。
+- 能逐节阅读并写入 section note。
+- 能更新 `profile.md` 和 `knowledge-index.json`。
