@@ -498,6 +498,20 @@ User Query
 - 只展示上述 query 检索流程。
 - 在 shortlist 旁边标注“Search only: no download / no read unless user confirms”。
 
+### 截图插入说明（放在 Slide 10 后）
+
+请在 Slide 10 后面插入这张截图，作为“根据用户 Query 检索论文”的真实交互示例：
+
+```text
+/Users/user/Desktop/personal-projects/paperClaw/.codex/ppt/screenshot/search_1.png
+```
+
+插入要求：
+
+- 图片需要等比缩放并完整可见，不要裁剪关键内容。
+- 如果当前页放不下，或者会导致文字过小，请把这张图片单独放在一页新的 Slide 中。
+- 新增截图页应位于 Slide 10 和 Slide 11 之间。
+
 ---
 
 ## Slide 11: 召回论文后的 Guided Reading 流程
@@ -918,6 +932,20 @@ related old papers -> Agent teaching
 - 下方用读取箭头表示 section relation preview。
 - 强调 relation preview 是“辅助当前 section 讲解”，不是单独输出 bibliography。
 
+### 截图插入说明（放在 Slide 15 后）
+
+请在 Slide 15 后面插入这张截图，作为“Knowledge Index 辅助 Reading”的真实讲解示例：
+
+```text
+/Users/user/Desktop/personal-projects/paperClaw/.codex/ppt/screenshot/read.png
+```
+
+插入要求：
+
+- 图片需要等比缩放并完整可见，不要裁剪关键内容。
+- 如果当前页放不下，或者会导致文字过小，请把这张图片单独放在一页新的 Slide 中。
+- 新增截图页应位于 Slide 15 和 Slide 16 之间。
+
 ---
 
 ## Slide 16: Knowledge Index 如何作用于 Search
@@ -989,3 +1017,17 @@ Knowledge Index -> read / neighbor arXiv ids -> exclude list -> paper_search
 - 用一条主箭头表示“本地知识生成推荐 query”。
 - 用一条辅助箭头表示“排除已读/已关联论文”。
 - 最后可以用一句话标注：读过的论文越多，search 越个性化。
+
+### 截图插入说明（放在 Slide 16 后）
+
+请在 Slide 16 后面插入这张截图，作为“根据已阅读论文推荐新论文”的真实交互示例：
+
+```text
+/Users/user/Desktop/personal-projects/paperClaw/.codex/ppt/screenshot/search_2.png
+```
+
+插入要求：
+
+- 图片需要等比缩放并完整可见，不要裁剪关键内容。
+- 如果当前页放不下，或者会导致文字过小，请把这张图片单独放在一页新的 Slide 中。
+- 新增截图页应位于 Slide 16 之后。
