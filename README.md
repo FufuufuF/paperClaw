@@ -515,11 +515,27 @@ pnpm install
 
 ### 9.2 配置模型 API Key
 
-项目默认使用 DeepSeek compatible API:
+项目默认使用 DeepSeek compatible API。最小配置:
 
 ```bash
 echo "DEEPSEEK_API_KEY=sk-..." > .env
 ```
+
+也可以从模板开始配置其他 OpenAI-compatible 厂商:
+
+```bash
+cp .env-example .env
+```
+
+然后在 `.env` 里只打开一个 provider block，例如:
+
+```env
+PAPERCLAW_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+PAPERCLAW_MODEL=gpt-4o-mini
+```
+
+当前支持的 `.env` provider alias 包括 `deepseek`、`openai`、`openrouter`、`moonshot`、`dashscope`、`siliconflow`、`openai-compatible` 和 `custom`。
 
 ### 9.3 启动聊天
 

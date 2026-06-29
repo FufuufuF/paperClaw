@@ -4,18 +4,18 @@ import { cp, readdir, rename, rm } from 'node:fs/promises';
 import {
   AgentLoop,
   AutoCompact,
+  buildProviderSnapshot,
   type Channel,
   CommandRouter,
   Consolidator,
   ContextBuilder,
   CronService,
   createToolContext,
-  createLLMClient,
   defaultStoreDir,
   Dream,
   FeishuChannel,
   closePaperClawDatabase,
-  loadEnv,
+  loadConfig,
   MemoryStore,
   migrateLegacyMemoryHistory,
   migrateLegacySessions,
@@ -59,9 +59,10 @@ import { allDemoTools } from './tools/demo-tools.js';
  * read_paper) 后续直接 tools.register(...) 即可挂载, 不动这里的骨架.
  */
 async function main() {
-  loadEnv();
-
   const repoRoot = getRepoRoot();
+  const config = loadConfig({ repoRoot });
+  const providerSnapshot = buildProviderSnapshot(config);
+  const timezone = config.agents.defaults.timezone;
   const explicitStoreDir = process.env.PAPERCLAW_STORE_DIR ?? process.env.PAPERCLAW_OUTPUT_DIR;
   const storeDir = resolveStoreDir(repoRoot);
   await migrateLegacyOutputDir(repoRoot, storeDir, explicitStoreDir === undefined);
@@ -80,7 +81,7 @@ async function main() {
     closePaperClawDatabase(db);
     dbClosed = true;
   };
-  const llm = createLLMClient(); // 默认 deepseek-chat
+  const llm = providerSnapshot.client;
   const trace = new TraceBus(tracePath, 'master');
   const sessionStore = new SqliteSessionStore(db);
   await migrateLegacySessions({ db, sessionsDir, store: sessionStore });
@@ -105,7 +106,7 @@ async function main() {
   const searchState = new PaperSearchState();
   const contextBuilder = new ContextBuilder({
     workspace: repoRoot,
-    timezone: 'Asia/Shanghai',
+    timezone,
     builtinSkillsDirs: [
       PAPER_SEARCH_SKILLS_DIR,
       PAPER_READ_SKILLS_DIR,
@@ -118,7 +119,7 @@ async function main() {
   const tools = new ToolRegistry(undefined, createToolContext({
     workspace: repoRoot,
     outputDir,
-    timezone: 'Asia/Shanghai',
+    timezone,
   }));
   for (const t of allDemoTools) tools.register(t);
   for (const t of createPaperFileTools()) tools.register(t);
@@ -136,8 +137,8 @@ async function main() {
     const activeSessionId = sessionController.current();
     const activeSession = await sessionStore.load(activeSessionId);
     return {
-      provider: llm.id.split('/')[0],
-      model: llm.id.split('/').slice(1).join('/') || llm.id,
+      provider: providerSnapshot.provider,
+      model: providerSnapshot.model,
       session: {
         id: activeSessionId,
         sessionName: activeSession?.metadata.sessionName,
@@ -205,10 +206,12 @@ async function main() {
     runner: {
       tools,
       llm,
-      maxIterations: 30,
-      contextBudget: 24000,
+      maxIterations: config.agents.defaults.maxToolIterations,
+      contextBudget: providerSnapshot.contextWindowTokens,
       agentId: 'master',
       trace,
+      temperature: providerSnapshot.temperature,
+      maxTokens: providerSnapshot.maxTokens,
     },
     channel,
     trace,
